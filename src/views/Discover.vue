@@ -2,7 +2,6 @@
 import { onMounted } from "vue";
 import { RefreshCw, SlidersHorizontal } from "@lucide/vue";
 import SearchBar from "../components/SearchBar.vue";
-import ScanReport from "../components/ScanReport.vue";
 import SkillCard from "../components/SkillCard.vue";
 import { useSkillIndexStore } from "../stores";
 
@@ -32,8 +31,6 @@ onMounted(() => {
         刷新索引
       </button>
     </div>
-
-    <ScanReport />
 
     <SearchBar v-model="store.query" :result-count="store.results.length" :loading="store.loading && !store.index" />
 
@@ -66,7 +63,7 @@ onMounted(() => {
     <div v-else class="mt-8 rounded-xl border border-slate-200 bg-white px-6 shadow-sm">
       <div class="flex items-center justify-between border-b border-slate-100 py-4 text-xs text-slate-400">
         <span>{{ store.results.length }} 个结果</span>
-        <span v-if="store.index?.generatedAt">索引更新于 {{ new Date(store.index.generatedAt).toLocaleString('zh-CN') }}</span>
+        <span v-if="store.index?.generatedAt">索引更新于 {{ new Date(store.index.generatedAt).toLocaleString('zh-CN') }}<template v-if="store.index.truncated"> · 当前索引正在扩充</template></span>
       </div>
       <SkillCard v-for="result in store.results" :key="result.skill.id" :result="result" />
     </div>

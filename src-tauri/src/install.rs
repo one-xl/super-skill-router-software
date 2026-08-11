@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use crate::fetcher::{self, RemoteSkill};
 use crate::scanner::{self, ScanMode, ScanReport};
+use crate::settings;
 use crate::targets::{
     target_adapters_with_upload_dir, InstallOutcome, LocalSkill, TargetAdapter, TargetId,
 };
@@ -20,7 +21,6 @@ pub struct PendingInstallStore(Mutex<HashMap<String, LocalSkill>>);
 pub struct PreparedInstall {
     pub token: String,
     pub directory_name: String,
-    pub report: ScanReport,
 }
 
 #[derive(Serialize)]
@@ -51,14 +51,6 @@ pub async fn prepare_skill_install(
         .join("pending-installs")
         .join(&token);
     let downloaded = fetcher::download_skill(&skill, &cache).await?;
-    let report =
-        match scanner::scan_directory(app.clone(), &downloaded.source_dir, ScanMode::Fast).await {
-            Ok(report) => report,
-            Err(error) => {
-                let _ = fs::remove_dir_all(&cache);
-                return Err(error);
-            }
-        };
     let directory_name = downloaded.directory_name.clone();
     pending
         .0
@@ -68,8 +60,29 @@ pub async fn prepare_skill_install(
     Ok(PreparedInstall {
         token,
         directory_name,
-        report,
     })
+}
+
+#[tauri::command]
+pub async fn scan_prepared_skill(
+    app: AppHandle,
+    token: String,
+    mode: ScanMode,
+    pending: tauri::State<'_, PendingInstallStore>,
+) -> Result<ScanReport, String> {
+    let skill = pending
+        .0
+        .lock()
+        .map_err(|_| "安装状态不可用，请重试。".to_string())?
+        .get(&token)
+        .cloned()
+        .ok_or_else(|| "安装准备已过期，请重新下载。".to_string())?;
+    let configuration = if matches!(mode, ScanMode::Deep) {
+        Some(settings::load(&app)?.deep_scan)
+    } else {
+        None
+    };
+    scanner::scan_directory(app, &skill.source_dir, mode, configuration.as_ref()).await
 }
 
 #[tauri::command]

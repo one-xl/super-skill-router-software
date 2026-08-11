@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { CheckCircle2, Download, ExternalLink, FileText, GitBranch, LoaderCircle, ShieldAlert } from "@lucide/vue";
+import { CheckCircle2, Download, ExternalLink, FileText, GitBranch, LoaderCircle, ShieldAlert, Sparkles } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
 import { recordInstallations } from "../lib/database";
 import UploadGuide from "./UploadGuide.vue";
-import type { BatchInstallReport, PreparedInstall, SkillSearchResult, TargetDetection, TargetId } from "../types/skill";
+import type { BatchInstallReport, PreparedInstall, ScanMode, ScanReport, SkillSearchResult, TargetDetection, TargetId } from "../types/skill";
 
 const props = defineProps<{ result: SkillSearchResult }>();
 const preparing = ref(false);
 const installing = ref(false);
 const error = ref<string | null>(null);
 const prepared = ref<PreparedInstall | null>(null);
+const report = ref<ScanReport | null>(null);
+const scanning = ref(false);
+const scanSkipped = ref(false);
 const targets = ref<TargetDetection[]>([]);
 const selectedTargets = ref<TargetId[]>([]);
 const deployment = ref<BatchInstallReport | null>(null);
@@ -38,6 +41,14 @@ async function prepareInstall() {
   } finally {
     preparing.value = false;
   }
+}
+
+async function scan(mode: ScanMode | "skip") {
+  if (!prepared.value || scanning.value) return;
+  if (mode === "skip") { scanSkipped.value = true; return; }
+  scanning.value = true; error.value = null;
+  try { report.value = await invoke<ScanReport>("scan_prepared_skill", { token: prepared.value.token, mode }); }
+  catch (cause) { error.value = failureMessage(cause); } finally { scanning.value = false; }
 }
 
 async function installSelectedTargets() {
@@ -102,9 +113,14 @@ async function installSelectedTargets() {
       <UploadGuide v-if="uploadPackages.length" :packages="uploadPackages" />
       <p v-if="error" class="mt-2 border-t border-rose-200 pt-2 text-xs text-rose-800">{{ error }}</p>
     </div>
+    <div v-else-if="prepared && !report && !scanSkipped" class="mt-4 border border-slate-200 bg-slate-50 p-4">
+      <div class="flex items-center gap-2 text-sm font-semibold text-slate-900"><ShieldAlert class="size-4 text-teal-700" />下载完成，选择安装前扫描方式</div>
+      <div class="mt-3 flex flex-wrap gap-2"><button type="button" class="h-9 border border-slate-300 bg-white px-3 text-sm text-slate-700" :disabled="scanning" @click="scan('skip')">跳过扫描</button><button type="button" class="h-9 bg-teal-600 px-3 text-sm text-white disabled:bg-slate-300" :disabled="scanning" @click="scan('fast')"><LoaderCircle v-if="scanning" class="mr-1 inline size-4 animate-spin" />快速扫描</button><button type="button" class="inline-flex h-9 items-center gap-1 border border-teal-300 bg-white px-3 text-sm text-teal-800 disabled:opacity-50" :disabled="scanning" @click="scan('deep')"><Sparkles class="size-4" />深度扫描</button></div>
+      <p class="mt-2 text-xs text-slate-500">深度扫描使用设置页中的模型配置；扫描只作决策提示，仍由你决定是否部署。</p>
+    </div>
     <div v-else-if="prepared" class="mt-4 border border-slate-200 bg-slate-50 p-3">
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <p class="inline-flex items-center gap-2 text-sm font-medium text-slate-800"><ShieldAlert class="size-4" :class="prepared.report.risk_assessment.recommendation === 'SAFE' ? 'text-emerald-600' : 'text-rose-600'" />扫描完成：{{ prepared.report.risk_assessment.score }}/100 · {{ prepared.report.risk_assessment.recommendation.replace(/_/g, ' ') }}</p>
+        <p class="inline-flex items-center gap-2 text-sm font-medium text-slate-800"><ShieldAlert class="size-4" :class="report?.risk_assessment.recommendation === 'SAFE' ? 'text-emerald-600' : 'text-rose-600'" />{{ scanSkipped ? '已跳过扫描' : `扫描完成：${report?.risk_assessment.score}/100 · ${report?.risk_assessment.recommendation.replace(/_/g, ' ')}` }}</p>
         <button class="inline-flex h-9 items-center gap-2 bg-teal-600 px-3 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-slate-300" type="button" :disabled="installing || selectedTargets.length === 0" @click="installSelectedTargets"><LoaderCircle v-if="installing" class="size-4 animate-spin" />{{ installing ? '正在部署' : '部署到所选目标' }}</button>
       </div>
       <fieldset class="mt-3 grid gap-2 sm:grid-cols-2">

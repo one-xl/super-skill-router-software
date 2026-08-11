@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use crate::settings::{ApiConfig, ApiFormat};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tauri_plugin_shell::ShellExt;
@@ -78,13 +79,14 @@ pub async fn scan_skill(
     mode: ScanMode,
 ) -> Result<ScanReport, String> {
     let directory = Path::new(&skill_path);
-    scan_directory(app, directory, mode).await
+    scan_directory(app, directory, mode, None).await
 }
 
 pub async fn scan_directory(
     app: AppHandle,
     directory: &Path,
     mode: ScanMode,
+    config: Option<&ApiConfig>,
 ) -> Result<ScanReport, String> {
     if !directory.is_dir() {
         return Err(user_error(
@@ -92,11 +94,34 @@ pub async fn scan_directory(
         ));
     }
 
-    let command = app
+    if matches!(mode, ScanMode::Deep)
+        && config
+            .is_some_and(|value| value.api_key.trim().is_empty() || value.api_url.trim().is_empty())
+    {
+        return Err(user_error(
+            "深度扫描尚未配置 API URL 或 API Key，请先到设置页完成配置。",
+        ));
+    }
+    let mut command = app
         .shell()
         .sidecar(mode.sidecar_name())
         .map_err(|error| user_error(format!("扫描组件不可用：{error}")))?
         .args(mode.arguments(&directory.to_string_lossy()));
+    if let (ScanMode::Deep, Some(config)) = (&mode, config) {
+        command = match config.format {
+            ApiFormat::Openai => command
+                .env("SKILLSPECTOR_PROVIDER", "openai")
+                .env("OPENAI_API_KEY", &config.api_key)
+                .env("OPENAI_BASE_URL", &config.api_url),
+            ApiFormat::Anthropic => command
+                .env("SKILLSPECTOR_PROVIDER", "anthropic")
+                .env("ANTHROPIC_API_KEY", &config.api_key)
+                .env("ANTHROPIC_BASE_URL", &config.api_url),
+        };
+        if !config.model.trim().is_empty() {
+            command = command.env("SKILLSPECTOR_MODEL", &config.model);
+        }
+    }
     let output = tokio::time::timeout(SCAN_TIMEOUT, command.output())
         .await
         .map_err(|_| {

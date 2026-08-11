@@ -4,6 +4,7 @@ mod install;
 mod management;
 mod packager;
 mod scanner;
+mod settings;
 mod targets;
 
 fn installation_migrations() -> Vec<tauri_plugin_sql::Migration> {
@@ -35,7 +36,11 @@ pub fn run() -> tauri::Result<()> {
         .manage(management::PendingUninstallStore::default())
         .invoke_handler(tauri::generate_handler![
             scanner::scan_skill,
+            settings::get_settings,
+            settings::save_settings,
+            settings::refine_prompt,
             install::prepare_skill_install,
+            install::scan_prepared_skill,
             install::install_prepared_skill,
             install::reveal_packaged_skill,
             targets::detect_skill_targets,

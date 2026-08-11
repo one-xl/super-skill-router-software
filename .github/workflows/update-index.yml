@@ -20,12 +20,14 @@ jobs:
       - name: Build static index
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python indexer/crawl.py
+        run: python indexer/crawl.py --max-results 250
+      - name: Publish index to desktop bundle
+        run: cp indexer/index.json public/skill-index.json
       - name: Commit changed index
         run: |
-          if test -z "$(git status --porcelain -- indexer/index.json)"; then exit 0; fi
+          if test -z "$(git status --porcelain -- indexer/index.json public/skill-index.json)"; then exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add indexer/index.json
+          git add indexer/index.json public/skill-index.json
           git commit -m "chore: update skill index"
           git push

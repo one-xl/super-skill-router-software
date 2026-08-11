@@ -71,8 +71,11 @@ export interface ScanReport {
 export interface PreparedInstall {
   token: string;
   directory_name: string;
-  report: ScanReport;
 }
+
+export type ApiFormat = "openai" | "anthropic";
+export interface ApiConfig { format: ApiFormat; apiUrl: string; apiKey: string; model: string; }
+export interface AppSettings { deepScan: ApiConfig; prompt: ApiConfig; }
 
 export interface InstallOutcome {
   kind: "installed" | "packaged_for_upload";

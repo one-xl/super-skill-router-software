@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { Check, Clipboard, Download, LoaderCircle, Plus, ShieldAlert, X } from "@lucide/vue";
+import { Check, Clipboard, Download, LoaderCircle, Plus, ShieldAlert, Sparkles, Wand2, X } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
 import { loadInstalledRecords, recordInstallations } from "../lib/database";
 import { useSkillIndexStore } from "../stores";
-import type { BatchInstallReport, ConversionResult, ConverterSkill, PreparedInstall, Skill, TargetDetection, TargetId } from "../types/skill";
+import type { BatchInstallReport, ConversionResult, ConverterSkill, PreparedInstall, ScanReport, Skill, TargetDetection, TargetId } from "../types/skill";
 
 const store = useSkillIndexStore();
 const requirement = ref("");
@@ -13,11 +13,15 @@ const conversion = ref<ConversionResult | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const copied = ref(false);
+const refining = ref(false);
 const manualSelectedIds = ref<string[] | null>(null);
 const addSkillId = ref("");
 const gapPreparing = ref<string | null>(null);
 const gapInstalling = ref(false);
 const gapPrepared = ref<{ skill: Skill; prepared: PreparedInstall; targets: TargetDetection[]; target: TargetId } | null>(null);
+const gapReport = ref<ScanReport | null>(null);
+const gapSkipped = ref(false);
+const gapScanning = ref(false);
 
 function toMetadata(skill: Skill): ConverterSkill {
   return { id: skill.id, name: skill.name, description: skill.description, whenToUse: skill.whenToUse, tags: skill.tags, frecency: 0 };
@@ -94,6 +98,12 @@ async function copyPrompt() {
     error.value = `无法复制 prompt：${fail(cause)}`;
   }
 }
+async function refinePrompt() {
+  if (!conversion.value || refining.value) return;
+  refining.value = true; error.value = null;
+  try { conversion.value = { ...conversion.value, prompt: await invoke<string>("refine_prompt", { request: { requirement: requirement.value, templatePrompt: conversion.value.prompt } }) }; }
+  catch (cause) { error.value = fail(cause); } finally { refining.value = false; }
+}
 
 async function prepareGapInstall(skillId: string) {
   const skill = store.skills.find((candidate) => candidate.id === skillId);
@@ -108,11 +118,20 @@ async function prepareGapInstall(skillId: string) {
     const target = targets.find((candidate) => candidate.id === "claude_code" && candidate.available)?.id ?? targets.find((candidate) => candidate.id !== "claude_desktop" && candidate.available)?.id;
     if (!target) throw new Error("未检测到可自动部署的目标，请先安装 Claude Code 或 Codex CLI。");
     gapPrepared.value = { skill, prepared, targets, target };
+    gapReport.value = null; gapSkipped.value = false;
   } catch (cause) {
     error.value = fail(cause);
   } finally {
     gapPreparing.value = null;
   }
+}
+
+async function scanGap(mode: "fast" | "deep" | "skip") {
+  if (!gapPrepared.value || gapScanning.value) return;
+  if (mode === "skip") { gapSkipped.value = true; return; }
+  gapScanning.value = true; error.value = null;
+  try { gapReport.value = await invoke<ScanReport>("scan_prepared_skill", { token: gapPrepared.value.prepared.token, mode }); }
+  catch (cause) { error.value = fail(cause); } finally { gapScanning.value = false; }
 }
 
 async function installGap() {
@@ -163,10 +182,10 @@ onMounted(async () => {
           <div v-if="selectableInstalled.length" class="mt-3 flex items-center gap-2"><select v-model="addSkillId" class="h-8 min-w-0 flex-1 border border-slate-300 bg-white px-2 text-xs disabled:cursor-not-allowed disabled:bg-slate-100" :disabled="!canAddSkill"><option value="">手动添加已安装 skill</option><option v-for="skill in selectableInstalled" :key="skill.id" :value="skill.id">{{ skill.name }}</option></select><button type="button" class="flex size-8 items-center justify-center border border-slate-300 text-slate-600 hover:border-teal-500 hover:text-teal-700 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300" :disabled="!canAddSkill" title="添加 skill" @click="addSkill"><Plus class="size-4" /></button></div>
           <div v-if="conversion.gaps.length" class="mt-5 border-t border-slate-200 pt-4"><h2 class="text-sm font-semibold text-slate-900">相关但未安装</h2><div class="mt-3 flex flex-wrap gap-2"><span v-for="skill in conversion.gaps" :key="skill.id" class="inline-flex items-center gap-2 border border-slate-300 bg-slate-100 px-2 py-1 text-xs text-slate-600">{{ skill.name }}<button type="button" class="inline-flex items-center gap-1 border border-slate-300 bg-white px-1.5 py-0.5 text-slate-700 hover:border-teal-500 hover:text-teal-700 disabled:opacity-50" :disabled="gapPreparing === skill.id" @click="prepareGapInstall(skill.id)"><LoaderCircle v-if="gapPreparing === skill.id" class="size-3 animate-spin" /><Download v-else class="size-3" />安装</button></span></div></div>
         </div>
-        <div v-if="gapPrepared" class="mt-4 border border-amber-300 bg-amber-50 p-4"><div class="flex items-center gap-2 text-sm font-semibold text-amber-950"><ShieldAlert class="size-4" />安装前扫描：{{ gapPrepared.prepared.report.risk_assessment.score }}/100 · {{ gapPrepared.prepared.report.risk_assessment.recommendation.replace(/_/g, ' ') }}</div><div class="mt-3 flex flex-wrap items-center gap-3"><select v-model="gapPrepared.target" class="h-9 border border-amber-300 bg-white px-2 text-sm"><option v-for="target in gapPrepared.targets.filter((target) => target.id !== 'claude_desktop' && target.available)" :key="target.id" :value="target.id">{{ target.name }}</option></select><button type="button" class="inline-flex h-9 items-center gap-2 bg-teal-600 px-3 text-sm font-medium text-white hover:bg-teal-700 disabled:bg-slate-300" :disabled="gapInstalling" @click="installGap"><LoaderCircle v-if="gapInstalling" class="size-4 animate-spin" />{{ gapInstalling ? '正在安装' : '继续安装并更新 Prompt' }}</button></div><p class="mt-2 text-xs text-amber-900">扫描仅辅助判断，是否继续安装由你决定。</p></div>
+        <div v-if="gapPrepared" class="mt-4 border border-amber-300 bg-amber-50 p-4"><div class="flex items-center gap-2 text-sm font-semibold text-amber-950"><ShieldAlert class="size-4" />{{ gapReport ? `扫描完成：${gapReport.risk_assessment.score}/100 · ${gapReport.risk_assessment.recommendation.replace(/_/g, ' ')}` : gapSkipped ? '已跳过扫描' : '选择安装前扫描方式' }}</div><div v-if="!gapReport && !gapSkipped" class="mt-3 flex flex-wrap gap-2"><button type="button" class="h-9 border border-amber-300 bg-white px-3 text-sm" :disabled="gapScanning" @click="scanGap('skip')">跳过扫描</button><button type="button" class="h-9 bg-teal-600 px-3 text-sm text-white" :disabled="gapScanning" @click="scanGap('fast')"><LoaderCircle v-if="gapScanning" class="mr-1 inline size-4 animate-spin" />快速扫描</button><button type="button" class="inline-flex h-9 items-center gap-1 border border-teal-300 bg-white px-3 text-sm" :disabled="gapScanning" @click="scanGap('deep')"><Sparkles class="size-4" />深度扫描</button></div><div v-else class="mt-3 flex flex-wrap items-center gap-3"><select v-model="gapPrepared.target" class="h-9 border border-amber-300 bg-white px-2 text-sm"><option v-for="target in gapPrepared.targets.filter((target) => target.id !== 'claude_desktop' && target.available)" :key="target.id" :value="target.id">{{ target.name }}</option></select><button type="button" class="inline-flex h-9 items-center gap-2 bg-teal-600 px-3 text-sm font-medium text-white hover:bg-teal-700 disabled:bg-slate-300" :disabled="gapInstalling" @click="installGap"><LoaderCircle v-if="gapInstalling" class="size-4 animate-spin" />{{ gapInstalling ? '正在安装' : '继续安装并更新 Prompt' }}</button></div><p class="mt-2 text-xs text-amber-900">扫描仅辅助判断，是否继续安装由你决定。</p></div>
       </div>
       <div>
-        <div class="flex items-center justify-between gap-3"><h2 class="text-sm font-semibold text-slate-800">实时预览</h2><button type="button" class="inline-flex h-9 items-center gap-2 border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:border-teal-500 hover:text-teal-700 disabled:opacity-50" :disabled="!conversion" @click="copyPrompt"><Check v-if="copied" class="size-4 text-emerald-600" /><Clipboard v-else class="size-4" />{{ copied ? '已复制' : '复制' }}</button></div>
+        <div class="flex flex-wrap items-center justify-between gap-3"><h2 class="text-sm font-semibold text-slate-800">实时预览</h2><div class="flex gap-2"><button type="button" class="inline-flex h-9 items-center gap-2 border border-teal-300 bg-white px-3 text-sm font-medium text-teal-800 disabled:opacity-50" :disabled="!conversion || refining" @click="refinePrompt"><LoaderCircle v-if="refining" class="size-4 animate-spin" /><Wand2 v-else class="size-4" />LLM 精炼</button><button type="button" class="inline-flex h-9 items-center gap-2 border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:border-teal-500 hover:text-teal-700 disabled:opacity-50" :disabled="!conversion" @click="copyPrompt"><Check v-if="copied" class="size-4 text-emerald-600" /><Clipboard v-else class="size-4" />{{ copied ? '已复制' : '复制' }}</button></div></div>
         <pre class="mt-2 min-h-80 whitespace-pre-wrap border border-slate-300 bg-white p-4 text-sm leading-6 text-slate-700">{{ loading ? '正在匹配已安装 skill...' : conversion?.prompt || '输入需求后将在此生成结构化 prompt。' }}</pre>
       </div>
     </div>
