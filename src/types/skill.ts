@@ -47,3 +47,23 @@ export interface SkillSearchResult {
   score: number;
   matchedFields: SearchField[];
 }
+
+export type ScanMode = "fast" | "deep";
+
+export interface ScanIssue {
+  id: string;
+  category?: string | null;
+  severity: string;
+  confidence: number;
+  location: { file: string; start_line: number; end_line?: number | null };
+  explanation: string;
+  remediation?: string | null;
+  code_snippet?: string | null;
+}
+
+export interface ScanReport {
+  risk_assessment: { score: number; severity: string; recommendation: string };
+  issues: ScanIssue[];
+  execution_successful: boolean;
+  analysis_completeness: unknown;
+}

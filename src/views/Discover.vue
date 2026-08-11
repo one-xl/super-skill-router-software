@@ -2,6 +2,7 @@
 import { onMounted } from "vue";
 import { RefreshCw, SlidersHorizontal } from "@lucide/vue";
 import SearchBar from "../components/SearchBar.vue";
+import ScanReport from "../components/ScanReport.vue";
 import SkillCard from "../components/SkillCard.vue";
 import { useSkillIndexStore } from "../stores";
 
@@ -31,6 +32,8 @@ onMounted(() => {
         刷新索引
       </button>
     </div>
+
+    <ScanReport />
 
     <SearchBar v-model="store.query" :result-count="store.results.length" :loading="store.loading && !store.index" />
 

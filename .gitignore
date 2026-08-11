@@ -28,3 +28,7 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Local SkillSpector source, virtualenv, and PyInstaller intermediates
+tools/skillspector/
+tmp/
