@@ -4,7 +4,7 @@ import type { InstallationRecord } from "../types/skill";
 
 const DATABASE_URL = "sqlite:super-skill-router.db";
 
-export async function recordInstallations(skill: Skill, directoryName: string, report: BatchInstallReport) {
+export async function recordInstallations(skill: Skill, directoryName: string, report: BatchInstallReport, commitSha = skill.commit_sha) {
   const database = await Database.load(DATABASE_URL);
   const now = new Date().toISOString();
   for (const result of report.results) {
@@ -23,7 +23,7 @@ export async function recordInstallations(skill: Skill, directoryName: string, r
          installed_path = excluded.installed_path,
          package_path = excluded.package_path,
          updated_at = excluded.updated_at`,
-      [skill.name, directoryName, skill.repo, skill.source.rawUrl, skill.commit_sha, result.target, status, result.outcome.path ?? null, result.outcome.zip_path ?? null, now, now],
+      [skill.name, directoryName, skill.repo, skill.source.rawUrl, commitSha, result.target, status, result.outcome.path ?? null, result.outcome.zip_path ?? null, now, now],
     );
   }
 }

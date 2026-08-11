@@ -25,6 +25,7 @@ export interface Skill {
   files: SkillFile[];
   repo_size_kb: number;
   source: SkillSource;
+  remote_source?: "skillsmp";
 }
 
 export interface SkillIndex {
@@ -71,11 +72,13 @@ export interface ScanReport {
 export interface PreparedInstall {
   token: string;
   directory_name: string;
+  commit_sha: string;
 }
 
 export type ApiFormat = "openai" | "anthropic";
-export interface ApiConfig { format: ApiFormat; apiUrl: string; apiKey: string; model: string; }
-export interface AppSettings { deepScan: ApiConfig; prompt: ApiConfig; }
+export interface ApiConfig { format: ApiFormat; apiUrl: string; apiKey: string; model: string; apiKeyConfigured?: boolean; }
+export interface SkillsMpConfig { apiKey: string; apiKeyConfigured?: boolean; }
+export interface AppSettings { deepScan: ApiConfig; prompt: ApiConfig; skillsMp: SkillsMpConfig; }
 
 export interface InstallOutcome {
   kind: "installed" | "packaged_for_upload";

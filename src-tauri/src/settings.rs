@@ -4,6 +4,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{AppHandle, Manager};
 
+const CREDENTIAL_SERVICE: &str = "Super Skill Router";
+const DEEP_SCAN_SECRET: &str = "deep-scan-api-key";
+const PROMPT_SECRET: &str = "prompt-api-key";
+const SKILLSMP_SECRET: &str = "skillsmp-api-key";
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiFormat {
@@ -17,8 +22,20 @@ pub enum ApiFormat {
 pub struct ApiConfig {
     pub format: ApiFormat,
     pub api_url: String,
+    #[serde(default)]
     pub api_key: String,
     pub model: String,
+    #[serde(default)]
+    pub api_key_configured: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsMpConfig {
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub api_key_configured: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -26,6 +43,8 @@ pub struct ApiConfig {
 pub struct AppSettings {
     pub deep_scan: ApiConfig,
     pub prompt: ApiConfig,
+    #[serde(default)]
+    pub skills_mp: SkillsMpConfig,
 }
 
 fn path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
@@ -40,23 +59,107 @@ pub fn load(app: &AppHandle) -> Result<AppSettings, String> {
     if !path.is_file() {
         return Ok(AppSettings::default());
     }
-    serde_json::from_slice(&fs::read(&path).map_err(|error| format!("无法读取设置：{error}"))?)
-        .map_err(|error| format!("设置格式无效：{error}"))
+    let mut settings: AppSettings =
+        serde_json::from_slice(&fs::read(&path).map_err(|error| format!("无法读取设置：{error}"))?)
+            .map_err(|error| format!("设置格式无效：{error}"))?;
+
+    // Migrate keys saved by versions before Credential Manager support.
+    let had_legacy_secret = !settings.deep_scan.api_key.is_empty()
+        || !settings.prompt.api_key.is_empty()
+        || !settings.skills_mp.api_key.is_empty();
+    migrate_secret(&settings.deep_scan.api_key, DEEP_SCAN_SECRET)?;
+    migrate_secret(&settings.prompt.api_key, PROMPT_SECRET)?;
+    migrate_secret(&settings.skills_mp.api_key, SKILLSMP_SECRET)?;
+    settings.deep_scan.api_key = read_secret(DEEP_SCAN_SECRET)?.unwrap_or_default();
+    settings.deep_scan.api_key_configured = !settings.deep_scan.api_key.is_empty();
+    settings.prompt.api_key = read_secret(PROMPT_SECRET)?.unwrap_or_default();
+    settings.prompt.api_key_configured = !settings.prompt.api_key.is_empty();
+    settings.skills_mp.api_key = read_secret(SKILLSMP_SECRET)?.unwrap_or_default();
+    settings.skills_mp.api_key_configured = !settings.skills_mp.api_key.is_empty();
+    if had_legacy_secret {
+        write_settings(&path, &settings)?;
+    }
+    Ok(settings)
 }
 #[tauri::command]
 pub fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
-    load(&app)
+    let mut settings = load(&app)?;
+    settings.deep_scan.api_key.clear();
+    settings.prompt.api_key.clear();
+    settings.skills_mp.api_key.clear();
+    Ok(settings)
 }
 #[tauri::command]
 pub fn save_settings(app: AppHandle, settings: AppSettings) -> Result<(), String> {
     let path = path(&app)?;
+    if !settings.deep_scan.api_key.trim().is_empty() {
+        write_secret(DEEP_SCAN_SECRET, &settings.deep_scan.api_key)?;
+    }
+    if !settings.prompt.api_key.trim().is_empty() {
+        write_secret(PROMPT_SECRET, &settings.prompt.api_key)?;
+    }
+    if !settings.skills_mp.api_key.trim().is_empty() {
+        write_secret(SKILLSMP_SECRET, &settings.skills_mp.api_key)?;
+    }
+    let mut stored = settings;
+    stored.deep_scan.api_key.clear();
+    stored.deep_scan.api_key_configured = read_secret(DEEP_SCAN_SECRET)?.is_some();
+    stored.prompt.api_key.clear();
+    stored.prompt.api_key_configured = read_secret(PROMPT_SECRET)?.is_some();
+    stored.skills_mp.api_key.clear();
+    stored.skills_mp.api_key_configured = read_secret(SKILLSMP_SECRET)?.is_some();
+    write_settings(&path, &stored)
+}
+
+pub fn skillsmp_api_key(app: &AppHandle) -> Result<String, String> {
+    let api_key = load(app)?.skills_mp.api_key;
+    if api_key.trim().is_empty() {
+        Err("SkillsMP API Key 尚未配置，请先到设置页保存。".into())
+    } else {
+        Ok(api_key)
+    }
+}
+
+fn write_settings(path: &std::path::Path, settings: &AppSettings) -> Result<(), String> {
     let parent = path.parent().ok_or_else(|| "设置目录无效。".to_string())?;
     fs::create_dir_all(parent).map_err(|error| format!("无法创建设置目录：{error}"))?;
+    let mut stored = settings.clone();
+    stored.deep_scan.api_key.clear();
+    stored.prompt.api_key.clear();
+    stored.skills_mp.api_key.clear();
     let data =
-        serde_json::to_vec_pretty(&settings).map_err(|error| format!("无法保存设置：{error}"))?;
+        serde_json::to_vec_pretty(&stored).map_err(|error| format!("无法保存设置：{error}"))?;
     let temporary = path.with_extension("json.tmp");
     fs::write(&temporary, data).map_err(|error| format!("无法写入设置：{error}"))?;
-    fs::rename(&temporary, &path).map_err(|error| format!("无法完成设置保存：{error}"))
+    fs::rename(&temporary, path).map_err(|error| format!("无法完成设置保存：{error}"))
+}
+
+fn credential(name: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(CREDENTIAL_SERVICE, name)
+        .map_err(|error| format!("无法访问 Windows Credential Manager：{error}"))
+}
+
+fn read_secret(name: &str) -> Result<Option<String>, String> {
+    match credential(name)?.get_password() {
+        Ok(value) if !value.is_empty() => Ok(Some(value)),
+        Ok(_) | Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(format!(
+            "无法从 Windows Credential Manager 读取密钥：{error}"
+        )),
+    }
+}
+
+fn write_secret(name: &str, value: &str) -> Result<(), String> {
+    credential(name)?
+        .set_password(value)
+        .map_err(|error| format!("无法保存密钥到 Windows Credential Manager：{error}"))
+}
+
+fn migrate_secret(value: &str, name: &str) -> Result<(), String> {
+    if !value.trim().is_empty() {
+        write_secret(name, value)?;
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]

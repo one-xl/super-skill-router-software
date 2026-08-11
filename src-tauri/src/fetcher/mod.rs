@@ -12,8 +12,12 @@ pub struct RemoteSkill {
     pub name: String,
     pub repo: String,
     pub path: String,
+    #[serde(default)]
+    pub default_branch: String,
     pub commit_sha: String,
     pub files: Vec<RemoteFile>,
+    #[serde(default)]
+    pub remote_source: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -54,6 +58,84 @@ pub async fn download_skill(
         directory_name,
         source_dir: destination,
     })
+}
+
+/// SkillsMP discovers a GitHub directory but does not publish a file manifest or commit SHA.
+/// Resolve the selected ref once, then download that exact revision through codeload.
+pub async fn download_skillsmp_skill(
+    skill: &RemoteSkill,
+    destination_parent: &Path,
+) -> Result<(LocalSkill, String), String> {
+    if skill.remote_source != "skillsmp" {
+        return Err("该远程 skill 的下载来源无效。".into());
+    }
+    validate_discovered_skill(skill)?;
+    let directory_name = install_directory_name(skill)?;
+    let destination = destination_parent.join(&directory_name);
+    std::fs::create_dir_all(destination_parent)
+        .map_err(|error| format!("无法创建下载缓存目录：{error}"))?;
+    let client = reqwest::Client::builder()
+        .user_agent("Super-Skill-Router/0.1")
+        .build()
+        .map_err(|error| format!("无法初始化下载客户端：{error}"))?;
+    let commit_sha = resolve_commit_sha(&client, skill).await?;
+    if let Err(error) =
+        archive::download_and_extract_tree(&client, skill, &commit_sha, &destination).await
+    {
+        let _ = remove_directory(&destination);
+        return Err(error);
+    }
+    if !destination.join("SKILL.md").is_file() {
+        let _ = remove_directory(&destination);
+        return Err("下载内容不完整：SkillsMP 指向的目录中缺少 SKILL.md。".into());
+    }
+    Ok((
+        LocalSkill {
+            directory_name,
+            source_dir: destination,
+        },
+        commit_sha,
+    ))
+}
+
+async fn resolve_commit_sha(
+    client: &reqwest::Client,
+    skill: &RemoteSkill,
+) -> Result<String, String> {
+    let mut url = reqwest::Url::parse("https://api.github.com/")
+        .map_err(|error| format!("无法创建 GitHub 元数据地址：{error}"))?;
+    let mut segments = url
+        .path_segments_mut()
+        .map_err(|_| "无法创建 GitHub 元数据地址。".to_string())?;
+    segments.pop_if_empty();
+    segments.push("repos");
+    segments.extend(skill.repo.split('/'));
+    segments.push("commits");
+    segments.push(&skill.default_branch);
+    drop(segments);
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| format!("无法解析 SkillsMP 结果的 GitHub commit：{error}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "无法解析 SkillsMP 结果的 GitHub commit（HTTP {}）。",
+            response.status()
+        ));
+    }
+    #[derive(Deserialize)]
+    struct CommitResponse {
+        sha: String,
+    }
+    let resolved: CommitResponse = response
+        .json()
+        .await
+        .map_err(|error| format!("GitHub commit 响应无法解析：{error}"))?;
+    if resolved.sha.len() < 7 || resolved.sha.chars().any(|value| !value.is_ascii_hexdigit()) {
+        return Err("GitHub 返回的 commit SHA 无效。".into());
+    }
+    Ok(resolved.sha)
 }
 
 fn verify_download(skill: &RemoteSkill, destination: &Path) -> Result<(), String> {
@@ -143,6 +225,33 @@ fn validate_remote_skill(skill: &RemoteSkill) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_discovered_skill(skill: &RemoteSkill) -> Result<(), String> {
+    if skill.repo.split('/').count() != 2
+        || skill.repo.chars().any(|character| {
+            !(character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | '/'))
+        })
+    {
+        return Err("SkillsMP 返回的仓库名称无效。".into());
+    }
+    if skill.default_branch.trim().is_empty()
+        || skill
+            .default_branch
+            .chars()
+            .any(|character| character.is_control())
+    {
+        return Err("SkillsMP 返回的分支名称无效。".into());
+    }
+    let root = skill.path.trim_matches('/');
+    if root.is_empty()
+        || root
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err("SkillsMP 返回的 skill 路径无效。".into());
+    }
+    Ok(())
+}
+
 pub(crate) fn remove_directory(path: &PathBuf) -> std::io::Result<()> {
     if path.exists() {
         std::fs::remove_dir_all(path)
@@ -159,11 +268,13 @@ mod tests {
             name: "demo".into(),
             repo: "owner/repository".into(),
             path: path.into(),
+            default_branch: "main".into(),
             commit_sha: "abcdef0123456789".into(),
             files: vec![RemoteFile {
                 path: "SKILL.md".into(),
                 size: 1,
             }],
+            remote_source: String::new(),
         }
     }
     #[test]
@@ -192,6 +303,7 @@ mod tests {
             name: "bazi".into(),
             repo: "jinchenma94/bazi-skill".into(),
             path: ".".into(),
+            default_branch: "main".into(),
             commit_sha: "bdd7f863d4450bf0e2fac84579ad6b45cfdfa25c".into(),
             files: vec![
                 RemoteFile {
@@ -203,6 +315,7 @@ mod tests {
                     size: 7_385,
                 },
             ],
+            remote_source: String::new(),
         };
         let downloaded = download_skill(&skill, download_root.path())
             .await

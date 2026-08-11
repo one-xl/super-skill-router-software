@@ -141,7 +141,7 @@ async function installGap() {
   try {
     const report = await invoke<BatchInstallReport>("install_prepared_skill", { token: gapPrepared.value.prepared.token, targets: [gapPrepared.value.target] });
     if (!report.results.some((result) => result.outcome?.kind === "installed")) throw new Error(report.results.map((result) => result.error).filter(Boolean).join("；") || "skill 未能安装。");
-    await recordInstallations(gapPrepared.value.skill, gapPrepared.value.prepared.directory_name, report);
+    await recordInstallations(gapPrepared.value.skill, gapPrepared.value.prepared.directory_name, report, gapPrepared.value.prepared.commit_sha);
     const installedId = gapPrepared.value.skill.id;
     gapPrepared.value = null;
     await refreshInstalled();

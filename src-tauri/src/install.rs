@@ -21,6 +21,7 @@ pub struct PendingInstallStore(Mutex<HashMap<String, LocalSkill>>);
 pub struct PreparedInstall {
     pub token: String,
     pub directory_name: String,
+    pub commit_sha: String,
 }
 
 #[derive(Serialize)]
@@ -50,7 +51,12 @@ pub async fn prepare_skill_install(
         .map_err(|error| format!("无法确定安装缓存目录：{error}"))?
         .join("pending-installs")
         .join(&token);
-    let downloaded = fetcher::download_skill(&skill, &cache).await?;
+    let (downloaded, commit_sha) = if skill.remote_source == "skillsmp" {
+        fetcher::download_skillsmp_skill(&skill, &cache).await?
+    } else {
+        let commit_sha = skill.commit_sha.clone();
+        (fetcher::download_skill(&skill, &cache).await?, commit_sha)
+    };
     let directory_name = downloaded.directory_name.clone();
     pending
         .0
@@ -60,6 +66,7 @@ pub async fn prepare_skill_install(
     Ok(PreparedInstall {
         token,
         directory_name,
+        commit_sha,
     })
 }
 
