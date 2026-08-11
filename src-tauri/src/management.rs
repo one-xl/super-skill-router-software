@@ -116,6 +116,11 @@ pub fn commit_skill_uninstall(
     for item in &staged {
         if let Err(error) = commit_staged_uninstall(item) {
             rollback_all(&staged);
+            pending
+                .0
+                .lock()
+                .map_err(|_| "卸载回滚后无法恢复事务状态，请刷新管理页确认。".to_string())?
+                .insert(token, staged);
             return Err(error);
         }
     }
