@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use super::{InstallOutcome, InstalledSkill, LocalSkill, SkillTarget};
+use super::{InstallOutcome, InstalledSkill, LocalSkill, SkillTarget, StagedUninstall};
 use crate::packager::package_for_claude_desktop;
 
 pub struct ClaudeDesktopTarget {
@@ -30,6 +30,12 @@ impl SkillTarget for ClaudeDesktopTarget {
     }
     fn list_installed(&self) -> Result<Vec<InstalledSkill>, String> {
         Ok(Vec::new())
+    }
+    fn stage_uninstall(&self, _: &str, _: &str) -> Result<Option<StagedUninstall>, String> {
+        Err("Claude Desktop 的 skill 存在于账号侧，无法在本地卸载。".into())
+    }
+    fn read_skill_markdown(&self, _: &str) -> Result<String, String> {
+        Err("Claude Desktop 没有本地 skill 目录可供预览。".into())
     }
 }
 

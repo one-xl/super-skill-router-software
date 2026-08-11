@@ -32,3 +32,17 @@ export async function loadInstalledRecords() {
   const database = await Database.load(DATABASE_URL);
   return database.select<InstallationRecord[]>("SELECT skill_name, directory_name, repository, commit_sha, target, status FROM installation_records WHERE status = 'installed'");
 }
+
+export async function loadInstallationRecords() {
+  const database = await Database.load(DATABASE_URL);
+  return database.select<InstallationRecord[]>("SELECT skill_name, directory_name, repository, source_url, commit_sha, target, status, installed_path, package_path, installed_at, updated_at FROM installation_records ORDER BY skill_name, target");
+}
+
+export async function deleteInstallationRecords(directoryName: string, targets: string[]) {
+  const database = await Database.load(DATABASE_URL);
+  await database.execute("BEGIN IMMEDIATE");
+  try {
+    for (const target of targets) await database.execute("DELETE FROM installation_records WHERE directory_name = $1 AND target = $2", [directoryName, target]);
+    await database.execute("COMMIT");
+  } catch (error) { await database.execute("ROLLBACK"); throw error; }
+}

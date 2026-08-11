@@ -128,4 +128,12 @@ export interface InstallationRecord {
   commit_sha: string;
   target: TargetId;
   status: "installed" | "packaged_for_upload";
+  source_url?: string;
+  installed_path?: string | null;
+  package_path?: string | null;
+  installed_at?: string;
+  updated_at?: string;
 }
+
+export interface TargetSkillInventory { id: TargetId; name: string; skills: Array<{ directory_name: string; path: string }>; error: string | null; }
+export interface PreparedUninstall { token: string; staged_targets: TargetId[]; }

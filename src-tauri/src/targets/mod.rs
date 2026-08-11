@@ -81,6 +81,12 @@ pub struct InstalledSkill {
     pub path: PathBuf,
 }
 
+#[derive(Clone, Debug)]
+pub struct StagedUninstall {
+    original_path: PathBuf,
+    staged_path: PathBuf,
+}
+
 #[allow(dead_code)]
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -97,6 +103,12 @@ pub trait SkillTarget {
     fn install(&self, skill: &LocalSkill) -> Result<InstallOutcome, String>;
     fn uninstall(&self, skill_name: &str) -> Result<(), String>;
     fn list_installed(&self) -> Result<Vec<InstalledSkill>, String>;
+    fn stage_uninstall(
+        &self,
+        skill_name: &str,
+        transaction_id: &str,
+    ) -> Result<Option<StagedUninstall>, String>;
+    fn read_skill_markdown(&self, skill_name: &str) -> Result<String, String>;
 }
 
 pub(crate) fn install_directory(
@@ -153,6 +165,52 @@ pub(crate) fn uninstall_directory(skills_root: &Path, skill_name: &str) -> Resul
     } else {
         Ok(())
     }
+}
+
+pub(crate) fn stage_uninstall_directory(
+    skills_root: &Path,
+    skill_name: &str,
+    transaction_id: &str,
+) -> Result<Option<StagedUninstall>, String> {
+    validate_directory_name(skill_name)?;
+    if transaction_id.is_empty() {
+        return Err("无法创建卸载事务。".into());
+    }
+    let original_path = skills_root.join(skill_name);
+    if !original_path.exists() {
+        return Ok(None);
+    }
+    let staged_path = skills_root.join(format!(".{skill_name}.uninstalling-{transaction_id}"));
+    fs::rename(&original_path, &staged_path)
+        .map_err(|error| format!("无法暂存待卸载的 skill，已取消卸载：{error}"))?;
+    Ok(Some(StagedUninstall {
+        original_path,
+        staged_path,
+    }))
+}
+
+pub(crate) fn commit_staged_uninstall(staged: &StagedUninstall) -> Result<(), String> {
+    if staged.staged_path.exists() {
+        remove_path(&staged.staged_path).map_err(|error| format!("无法完成卸载清理：{error}"))?;
+    }
+    Ok(())
+}
+
+pub(crate) fn rollback_staged_uninstall(staged: &StagedUninstall) -> Result<(), String> {
+    if staged.staged_path.exists() {
+        fs::rename(&staged.staged_path, &staged.original_path)
+            .map_err(|error| format!("无法回滚卸载：{error}"))?;
+    }
+    Ok(())
+}
+
+pub(crate) fn read_skill_markdown_from_directory(
+    skills_root: &Path,
+    skill_name: &str,
+) -> Result<String, String> {
+    validate_directory_name(skill_name)?;
+    let skill_file = skills_root.join(skill_name).join("SKILL.md");
+    fs::read_to_string(&skill_file).map_err(|error| format!("无法读取 SKILL.md：{error}"))
 }
 
 pub(crate) fn list_directories(skills_root: &Path) -> Result<Vec<InstalledSkill>, String> {
@@ -238,6 +296,32 @@ pub fn detect_skill_targets() -> Vec<TargetDetection> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn staged_uninstall_can_be_rolled_back_or_committed() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let root = workspace.path().join("skills");
+        let skill = root.join("demo");
+        fs::create_dir_all(&skill).expect("skill directory");
+        fs::write(skill.join("SKILL.md"), "---\nname: demo\n---\n").expect("skill file");
+
+        let staged = stage_uninstall_directory(&root, "demo", "rollback").expect("stage");
+        let staged = staged.expect("existing skill should be staged");
+        assert!(!skill.exists());
+        rollback_staged_uninstall(&staged).expect("rollback");
+        assert!(skill.is_dir());
+
+        let staged = stage_uninstall_directory(&root, "demo", "commit").expect("stage");
+        let staged = staged.expect("existing skill should be staged");
+        commit_staged_uninstall(&staged).expect("commit");
+        assert!(!skill.exists());
+    }
 }
 
 pub(crate) fn windows_home() -> Option<PathBuf> {

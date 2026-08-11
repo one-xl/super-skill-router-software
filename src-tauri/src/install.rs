@@ -228,6 +228,16 @@ mod tests {
         fn list_installed(&self) -> Result<Vec<InstalledSkill>, String> {
             Ok(Vec::new())
         }
+        fn stage_uninstall(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<Option<crate::targets::StagedUninstall>, String> {
+            Ok(None)
+        }
+        fn read_skill_markdown(&self, _: &str) -> Result<String, String> {
+            Ok(String::new())
+        }
     }
 
     #[test]

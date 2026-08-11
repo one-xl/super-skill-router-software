@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
 use super::{
-    install_directory, list_directories, uninstall_directory, windows_home, InstallOutcome,
-    InstalledSkill, LocalSkill, SkillTarget,
+    install_directory, list_directories, read_skill_markdown_from_directory,
+    stage_uninstall_directory, uninstall_directory, windows_home, InstallOutcome, InstalledSkill,
+    LocalSkill, SkillTarget, StagedUninstall,
 };
 
 pub struct CodexCliTarget {
@@ -68,6 +69,22 @@ impl SkillTarget for CodexCliTarget {
             .skills_root()
             .ok_or_else(|| "无法确定 CODEX_HOME，无法读取 Codex CLI skills。".to_string())?;
         list_directories(&root)
+    }
+    fn stage_uninstall(
+        &self,
+        skill_name: &str,
+        transaction_id: &str,
+    ) -> Result<Option<StagedUninstall>, String> {
+        let root = self
+            .skills_root()
+            .ok_or_else(|| "无法确定 CODEX_HOME，无法卸载 Codex CLI。".to_string())?;
+        stage_uninstall_directory(&root, skill_name, transaction_id)
+    }
+    fn read_skill_markdown(&self, skill_name: &str) -> Result<String, String> {
+        let root = self
+            .skills_root()
+            .ok_or_else(|| "无法确定 CODEX_HOME，无法读取 Codex CLI skills。".to_string())?;
+        read_skill_markdown_from_directory(&root, skill_name)
     }
 }
 

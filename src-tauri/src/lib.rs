@@ -1,6 +1,7 @@
 mod converter;
 mod fetcher;
 mod install;
+mod management;
 mod packager;
 mod scanner;
 mod targets;
@@ -31,13 +32,19 @@ pub fn run() -> tauri::Result<()> {
                 .build(),
         )
         .manage(install::PendingInstallStore::default())
+        .manage(management::PendingUninstallStore::default())
         .invoke_handler(tauri::generate_handler![
             scanner::scan_skill,
             install::prepare_skill_install,
             install::install_prepared_skill,
             install::reveal_packaged_skill,
             targets::detect_skill_targets,
-            converter::convert_requirement
+            converter::convert_requirement,
+            management::list_installed_skills,
+            management::read_installed_skill_markdown,
+            management::prepare_skill_uninstall,
+            management::commit_skill_uninstall,
+            management::rollback_skill_uninstall
         ])
         .run(tauri::generate_context!())
 }

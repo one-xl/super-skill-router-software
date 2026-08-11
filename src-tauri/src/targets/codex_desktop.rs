@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use super::{CodexCliTarget, InstallOutcome, InstalledSkill, LocalSkill, SkillTarget};
+use super::{
+    CodexCliTarget, InstallOutcome, InstalledSkill, LocalSkill, SkillTarget, StagedUninstall,
+};
 
 pub struct CodexDesktopTarget {
     shared_home: CodexCliTarget,
@@ -38,6 +40,16 @@ impl SkillTarget for CodexDesktopTarget {
     }
     fn list_installed(&self) -> Result<Vec<InstalledSkill>, String> {
         self.shared_home.list_installed()
+    }
+    fn stage_uninstall(
+        &self,
+        skill_name: &str,
+        transaction_id: &str,
+    ) -> Result<Option<StagedUninstall>, String> {
+        self.shared_home.stage_uninstall(skill_name, transaction_id)
+    }
+    fn read_skill_markdown(&self, skill_name: &str) -> Result<String, String> {
+        self.shared_home.read_skill_markdown(skill_name)
     }
 }
 

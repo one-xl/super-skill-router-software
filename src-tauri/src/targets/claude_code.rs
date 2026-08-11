@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use super::{
-    validate_directory_name, windows_home, InstallOutcome, InstalledSkill, LocalSkill, SkillTarget,
+    read_skill_markdown_from_directory, stage_uninstall_directory, validate_directory_name,
+    windows_home, InstallOutcome, InstalledSkill, LocalSkill, SkillTarget, StagedUninstall,
 };
 
 pub struct ClaudeCodeTarget {
@@ -128,6 +129,18 @@ impl SkillTarget for ClaudeCodeTarget {
         }
         skills.sort_by(|left, right| left.directory_name.cmp(&right.directory_name));
         Ok(skills)
+    }
+
+    fn stage_uninstall(
+        &self,
+        skill_name: &str,
+        transaction_id: &str,
+    ) -> Result<Option<StagedUninstall>, String> {
+        stage_uninstall_directory(&self.skills_root()?, skill_name, transaction_id)
+    }
+
+    fn read_skill_markdown(&self, skill_name: &str) -> Result<String, String> {
+        read_skill_markdown_from_directory(&self.skills_root()?, skill_name)
     }
 }
 
