@@ -87,36 +87,36 @@ async function installSelectedTargets() {
 </script>
 
 <template>
-  <article class="group border-b border-slate-200 py-6 first:pt-2 last:border-b-0">
+  <article class="group border-b border-stone-200 py-5 first:pt-3 last:border-b-0">
     <div class="flex items-start justify-between gap-5">
       <div class="min-w-0">
         <div class="mb-2 flex flex-wrap items-center gap-2">
-          <h2 class="truncate text-lg font-semibold text-slate-950">{{ result.skill.name }}</h2>
-          <span v-for="field in result.matchedFields" :key="field" class="rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-medium text-teal-700">
+          <h2 class="truncate text-[15px] font-semibold text-stone-950">{{ result.skill.name }}</h2>
+          <span v-for="field in result.matchedFields" :key="field" class="rounded-full border border-teal-100 bg-teal-50 px-2 py-0.5 text-[10px] font-medium text-teal-700">
             命中{{ field === 'name' ? '名称' : field === 'whenToUse' ? '触发场景' : '描述' }}
           </span>
         </div>
-        <p class="mb-3 max-w-3xl text-sm leading-6 text-slate-600">{{ result.skill.description }}</p>
-        <p v-if="result.skill.whenToUse" class="mb-3 max-w-3xl text-sm leading-6 text-slate-500">
-          <span class="font-medium text-slate-700">适用场景：</span>{{ result.skill.whenToUse }}
+        <p class="mb-3 max-w-3xl text-[13px] leading-5 text-stone-600">{{ result.skill.description }}</p>
+        <p v-if="result.skill.whenToUse" class="mb-3 max-w-3xl text-[12px] leading-5 text-stone-500">
+          <span class="font-medium text-stone-700">适用场景：</span>{{ result.skill.whenToUse }}
         </p>
-        <div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-slate-400">
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] text-stone-400">
           <span class="inline-flex items-center gap-1.5"><GitBranch class="size-3.5" />{{ result.skill.repo }}</span>
           <span class="inline-flex items-center gap-1.5"><FileText class="size-3.5" />{{ result.skill.remote_source === 'skillsmp' ? '使用 SkillsMP 清单下载完整目录' : `${result.skill.files.length} 个文件` }}</span>
           <span>{{ result.skill.remote_source === 'skillsmp' ? '下载时锁定 commit' : `固定版本 ${result.skill.commit_sha.slice(0, 8)}` }}</span>
-          <span v-for="tag in result.skill.tags" :key="tag" class="rounded bg-slate-100 px-2 py-0.5 text-slate-500">#{{ tag }}</span>
+          <span v-for="tag in result.skill.tags" :key="tag" class="rounded bg-stone-100 px-2 py-0.5 text-stone-500">#{{ tag }}</span>
         </div>
       </div>
       <div class="flex shrink-0 items-center gap-2">
-        <button class="flex size-9 items-center justify-center rounded-lg border border-teal-600 bg-teal-600 text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300" type="button" :disabled="preparing || installing || !!deployment" title="下载、扫描并选择部署目标" @click="prepareInstall">
+        <button class="icon-button-primary" type="button" :disabled="preparing || installing || !!deployment" title="下载、扫描并选择部署目标" @click="prepareInstall">
           <LoaderCircle v-if="preparing" class="size-4 animate-spin" />
           <Download v-else class="size-4" :stroke-width="1.8" />
         </button>
-        <button class="flex size-9 items-center justify-center rounded-lg border border-slate-200 text-slate-400 transition hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700 disabled:opacity-50" type="button" :disabled="openingSource" title="在 GitHub 查看 SKILL.md" aria-label="在 GitHub 查看 SKILL.md" @click="openSource"><LoaderCircle v-if="openingSource" class="size-4 animate-spin" /><ExternalLink v-else class="size-4" :stroke-width="1.8" /></button>
+        <button class="icon-button" type="button" :disabled="openingSource" title="在 GitHub 查看 SKILL.md" aria-label="在 GitHub 查看 SKILL.md" @click="openSource"><LoaderCircle v-if="openingSource" class="size-4 animate-spin" /><ExternalLink v-else class="size-4" :stroke-width="1.8" /></button>
       </div>
     </div>
-    <div v-if="error && !deployment" class="mt-4 border-l-4 border-rose-500 bg-rose-50 px-3 py-2 text-sm text-rose-900" role="alert">{{ error }}</div>
-    <div v-else-if="deployment" class="mt-4 border-l-4 border-emerald-500 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+    <div v-if="error && !deployment" class="notice-error mt-4" role="alert">{{ error }}</div>
+    <div v-else-if="deployment" class="notice-success mt-4">
       <div class="flex items-center gap-2"><CheckCircle2 class="size-4" />部署完成</div>
       <ul class="mt-2 space-y-1 text-xs">
         <li v-for="result in deployment.results" :key="result.target">{{ result.target_name }}：{{ result.outcome?.kind === 'packaged_for_upload' ? '已打包，待上传' : result.outcome ? `已部署${result.reused_physical_install ? '（复用共享目录）' : ''}` : result.error }}</li>
@@ -124,23 +124,23 @@ async function installSelectedTargets() {
       <UploadGuide v-if="uploadPackages.length" :packages="uploadPackages" />
       <p v-if="error" class="mt-2 border-t border-rose-200 pt-2 text-xs text-rose-800">{{ error }}</p>
     </div>
-    <div v-else-if="prepared && !report && !scanSkipped" class="mt-4 border border-slate-200 bg-slate-50 p-4">
-      <div class="flex items-center gap-2 text-sm font-semibold text-slate-900"><ShieldAlert class="size-4 text-teal-700" />下载完成，选择安装前扫描方式</div>
-      <div class="mt-3 flex flex-wrap gap-2"><button type="button" class="h-9 border border-slate-300 bg-white px-3 text-sm text-slate-700" :disabled="scanning" @click="scan('skip')">跳过扫描</button><button type="button" class="h-9 bg-teal-600 px-3 text-sm text-white disabled:bg-slate-300" :disabled="scanning" @click="scan('fast')"><LoaderCircle v-if="scanning" class="mr-1 inline size-4 animate-spin" />快速扫描</button><button type="button" class="inline-flex h-9 items-center gap-1 border border-teal-300 bg-white px-3 text-sm text-teal-800 disabled:opacity-50" :disabled="scanning" @click="scan('deep')"><Sparkles class="size-4" />深度扫描</button></div>
-      <p class="mt-2 text-xs text-slate-500">深度扫描使用设置页中的模型配置；扫描只作决策提示，仍由你决定是否部署。</p>
+    <div v-else-if="prepared && !report && !scanSkipped" class="surface-muted mt-4 p-4">
+      <div class="flex items-center gap-2 text-[13px] font-semibold text-stone-900"><ShieldAlert class="size-4 text-teal-700" />下载完成，选择安装前扫描方式</div>
+      <div class="mt-3 flex flex-wrap gap-2"><button type="button" class="button-secondary" :disabled="scanning" @click="scan('skip')">跳过扫描</button><button type="button" class="button-primary" :disabled="scanning" @click="scan('fast')"><LoaderCircle v-if="scanning" class="size-4 animate-spin" />快速扫描</button><button type="button" class="button-secondary" :disabled="scanning" @click="scan('deep')"><Sparkles class="size-4" />深度扫描</button></div>
+      <p class="mt-2 text-[11px] text-stone-500">深度扫描使用设置页中的模型配置；扫描只作决策提示，仍由你决定是否部署。</p>
     </div>
-    <div v-else-if="prepared" class="mt-4 border border-slate-200 bg-slate-50 p-3">
+    <div v-else-if="prepared" class="surface-muted mt-4 p-4">
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <p class="inline-flex items-center gap-2 text-sm font-medium text-slate-800"><ShieldAlert class="size-4" :class="report?.risk_assessment.recommendation === 'SAFE' ? 'text-emerald-600' : 'text-rose-600'" />{{ scanSkipped ? '已跳过扫描' : `扫描完成：${report?.risk_assessment.score}/100 · ${report?.risk_assessment.recommendation.replace(/_/g, ' ')}` }}</p>
-        <button class="inline-flex h-9 items-center gap-2 bg-teal-600 px-3 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-slate-300" type="button" :disabled="installing || selectedTargets.length === 0" @click="installSelectedTargets"><LoaderCircle v-if="installing" class="size-4 animate-spin" />{{ installing ? '正在部署' : '部署到所选目标' }}</button>
+        <p class="inline-flex items-center gap-2 text-[13px] font-medium text-stone-800"><ShieldAlert class="size-4" :class="report?.risk_assessment.recommendation === 'SAFE' ? 'text-emerald-600' : 'text-rose-600'" />{{ scanSkipped ? '已跳过扫描' : `扫描完成：${report?.risk_assessment.score}/100 · ${report?.risk_assessment.recommendation.replace(/_/g, ' ')}` }}</p>
+        <button class="button-primary" type="button" :disabled="installing || selectedTargets.length === 0" @click="installSelectedTargets"><LoaderCircle v-if="installing" class="size-4 animate-spin" />{{ installing ? '正在部署' : '部署到所选目标' }}</button>
       </div>
       <fieldset class="mt-3 grid gap-2 sm:grid-cols-2">
-        <label v-for="target in targets" :key="target.id" class="flex items-center justify-between gap-3 border border-slate-200 bg-white px-3 py-2 text-sm" :class="target.id === 'claude_desktop' ? 'border-amber-200' : ''">
+        <label v-for="target in targets" :key="target.id" class="flex items-center justify-between gap-3 rounded-md border border-stone-200 bg-white px-3 py-2 text-[12px]" :class="target.id === 'claude_desktop' ? 'border-amber-200' : ''">
           <span class="flex items-center gap-2"><input v-model="selectedTargets" type="checkbox" :value="target.id" :disabled="target.id !== 'claude_desktop' && !target.available" />{{ target.name }}</span>
-          <span class="text-xs text-slate-500">{{ target.id === 'claude_desktop' ? '打包后待上传' : target.available ? '已探测' : '未检测到' }}</span>
+          <span class="text-[11px] text-stone-500">{{ target.id === 'claude_desktop' ? '打包后待上传' : target.available ? '已探测' : '未检测到' }}</span>
         </label>
       </fieldset>
-      <p class="mt-2 text-xs text-slate-500">扫描结果用于辅助决策；即使存在高风险提示，仍由你决定是否继续安装。</p>
+      <p class="mt-2 text-[11px] text-stone-500">扫描结果用于辅助决策；即使存在高风险提示，仍由你决定是否继续安装。</p>
     </div>
   </article>
 </template>

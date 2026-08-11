@@ -162,32 +162,62 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="mx-auto w-full max-w-6xl px-6 py-8 lg:px-10">
-    <div class="mb-7">
-      <p class="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">Compose</p>
-      <h1 class="text-3xl font-semibold text-slate-950">需求转 Prompt</h1>
-      <p class="mt-2 text-sm text-slate-500">模板模式仅推荐相关且已安装的 skill，不会嵌入 skill 正文。</p>
+  <section class="page-shell">
+    <div class="page-header">
+      <div>
+        <p class="page-kicker">Compose</p>
+        <h1 class="page-title">需求转 Prompt</h1>
+        <p class="page-description">匹配已安装的相关 skill，生成可直接执行的结构化 Prompt。</p>
+      </div>
     </div>
-    <p v-if="error" class="mb-5 border-l-4 border-rose-500 bg-rose-50 px-3 py-2 text-sm text-rose-900" role="alert">{{ error }}</p>
-    <div class="grid gap-6 lg:grid-cols-2">
-      <div>
-        <label class="text-sm font-semibold text-slate-800" for="requirement">需求</label>
-        <textarea id="requirement" v-model="requirement" class="mt-2 min-h-80 w-full resize-y border border-slate-300 bg-white p-4 text-sm leading-6 outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-100" placeholder="描述你希望 agent 完成的工作、技术栈和限制..." />
-        <div v-if="conversion" class="mt-4 border border-slate-200 bg-white p-4">
-          <div class="flex items-center justify-between gap-3"><h2 class="text-sm font-semibold text-slate-900">已选 Skill</h2><span class="text-xs text-slate-500">{{ conversion.scenario }}</span></div>
-          <div class="mt-3 flex flex-wrap gap-2">
-            <span v-for="skill in conversion.selected" :key="skill.id" class="inline-flex items-center gap-1 border border-teal-200 bg-teal-50 px-2 py-1 text-xs text-teal-800">{{ skill.name }}<button type="button" class="text-teal-700 hover:text-rose-700" :title="`移除 ${skill.name}`" @click="removeSkill(skill.id)"><X class="size-3" /></button></span>
-            <span v-if="!conversion.selected.length" class="text-xs text-slate-500">未推荐已安装 skill。</span>
-          </div>
-          <div v-if="selectableInstalled.length" class="mt-3 flex items-center gap-2"><select v-model="addSkillId" class="h-8 min-w-0 flex-1 border border-slate-300 bg-white px-2 text-xs disabled:cursor-not-allowed disabled:bg-slate-100" :disabled="!canAddSkill"><option value="">手动添加已安装 skill</option><option v-for="skill in selectableInstalled" :key="skill.id" :value="skill.id">{{ skill.name }}</option></select><button type="button" class="flex size-8 items-center justify-center border border-slate-300 text-slate-600 hover:border-teal-500 hover:text-teal-700 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300" :disabled="!canAddSkill" title="添加 skill" @click="addSkill"><Plus class="size-4" /></button></div>
-          <div v-if="conversion.gaps.length" class="mt-5 border-t border-slate-200 pt-4"><h2 class="text-sm font-semibold text-slate-900">相关但未安装</h2><div class="mt-3 flex flex-wrap gap-2"><span v-for="skill in conversion.gaps" :key="skill.id" class="inline-flex items-center gap-2 border border-slate-300 bg-slate-100 px-2 py-1 text-xs text-slate-600">{{ skill.name }}<button type="button" class="inline-flex items-center gap-1 border border-slate-300 bg-white px-1.5 py-0.5 text-slate-700 hover:border-teal-500 hover:text-teal-700 disabled:opacity-50" :disabled="gapPreparing === skill.id" @click="prepareGapInstall(skill.id)"><LoaderCircle v-if="gapPreparing === skill.id" class="size-3 animate-spin" /><Download v-else class="size-3" />安装</button></span></div></div>
+
+    <p v-if="error" class="notice-error mb-5" role="alert">{{ error }}</p>
+
+    <div class="grid items-start gap-5 lg:grid-cols-2">
+      <section class="surface overflow-hidden">
+        <div class="border-b border-stone-200 px-5 py-4">
+          <label class="section-title" for="requirement">需求</label>
+          <p class="mt-1 text-[11px] text-stone-500">说明目标、技术栈、限制与完成标准。</p>
         </div>
-        <div v-if="gapPrepared" class="mt-4 border border-amber-300 bg-amber-50 p-4"><div class="flex items-center gap-2 text-sm font-semibold text-amber-950"><ShieldAlert class="size-4" />{{ gapReport ? `扫描完成：${gapReport.risk_assessment.score}/100 · ${gapReport.risk_assessment.recommendation.replace(/_/g, ' ')}` : gapSkipped ? '已跳过扫描' : '选择安装前扫描方式' }}</div><div v-if="!gapReport && !gapSkipped" class="mt-3 flex flex-wrap gap-2"><button type="button" class="h-9 border border-amber-300 bg-white px-3 text-sm" :disabled="gapScanning" @click="scanGap('skip')">跳过扫描</button><button type="button" class="h-9 bg-teal-600 px-3 text-sm text-white" :disabled="gapScanning" @click="scanGap('fast')"><LoaderCircle v-if="gapScanning" class="mr-1 inline size-4 animate-spin" />快速扫描</button><button type="button" class="inline-flex h-9 items-center gap-1 border border-teal-300 bg-white px-3 text-sm" :disabled="gapScanning" @click="scanGap('deep')"><Sparkles class="size-4" />深度扫描</button></div><div v-else class="mt-3 flex flex-wrap items-center gap-3"><select v-model="gapPrepared.target" class="h-9 border border-amber-300 bg-white px-2 text-sm"><option v-for="target in gapPrepared.targets.filter((target) => target.id !== 'claude_desktop' && target.available)" :key="target.id" :value="target.id">{{ target.name }}</option></select><button type="button" class="inline-flex h-9 items-center gap-2 bg-teal-600 px-3 text-sm font-medium text-white hover:bg-teal-700 disabled:bg-slate-300" :disabled="gapInstalling" @click="installGap"><LoaderCircle v-if="gapInstalling" class="size-4 animate-spin" />{{ gapInstalling ? '正在安装' : '继续安装并更新 Prompt' }}</button></div><p class="mt-2 text-xs text-amber-900">扫描仅辅助判断，是否继续安装由你决定。</p></div>
-      </div>
-      <div>
-        <div class="flex flex-wrap items-center justify-between gap-3"><h2 class="text-sm font-semibold text-slate-800">实时预览</h2><div class="flex gap-2"><button type="button" class="inline-flex h-9 items-center gap-2 border border-teal-300 bg-white px-3 text-sm font-medium text-teal-800 disabled:opacity-50" :disabled="!conversion || refining" @click="refinePrompt"><LoaderCircle v-if="refining" class="size-4 animate-spin" /><Wand2 v-else class="size-4" />LLM 精炼</button><button type="button" class="inline-flex h-9 items-center gap-2 border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:border-teal-500 hover:text-teal-700 disabled:opacity-50" :disabled="!conversion" @click="copyPrompt"><Check v-if="copied" class="size-4 text-emerald-600" /><Clipboard v-else class="size-4" />{{ copied ? '已复制' : '复制' }}</button></div></div>
-        <pre class="mt-2 min-h-80 whitespace-pre-wrap border border-slate-300 bg-white p-4 text-sm leading-6 text-slate-700">{{ loading ? '正在匹配已安装 skill...' : conversion?.prompt || '输入需求后将在此生成结构化 prompt。' }}</pre>
-      </div>
+        <div class="p-5">
+          <textarea id="requirement" v-model="requirement" class="textarea-field min-h-72 resize-y" placeholder="描述你希望 agent 完成的工作、技术栈和限制..." />
+
+          <div v-if="conversion" class="mt-5 border-t border-stone-200 pt-5">
+            <div class="flex items-center justify-between gap-3"><h2 class="section-title">已选 Skill</h2><span class="rounded-full bg-stone-100 px-2.5 py-1 text-[10px] font-medium text-stone-500">{{ conversion.scenario }}</span></div>
+            <div class="mt-3 flex flex-wrap gap-2">
+              <span v-for="skill in conversion.selected" :key="skill.id" class="inline-flex items-center gap-1.5 rounded-full border border-teal-200 bg-teal-50 px-2.5 py-1 text-[11px] font-medium text-teal-800">{{ skill.name }}<button type="button" class="rounded-full text-teal-600 transition hover:text-rose-700" :title="`移除 ${skill.name}`" @click="removeSkill(skill.id)"><X class="size-3" /></button></span>
+              <span v-if="!conversion.selected.length" class="text-[12px] text-stone-500">未推荐已安装 skill。</span>
+            </div>
+
+            <div v-if="selectableInstalled.length" class="mt-3 flex items-center gap-2">
+              <select v-model="addSkillId" class="select-field h-9 min-w-0 flex-1 text-[12px]" :disabled="!canAddSkill"><option value="">手动添加已安装 skill</option><option v-for="skill in selectableInstalled" :key="skill.id" :value="skill.id">{{ skill.name }}</option></select>
+              <button type="button" class="icon-button" :disabled="!canAddSkill" title="添加 skill" @click="addSkill"><Plus class="size-4" /></button>
+            </div>
+
+            <div v-if="conversion.gaps.length" class="mt-5 border-t border-stone-200 pt-4">
+              <h2 class="section-title">相关但未安装</h2>
+              <div class="mt-3 flex flex-wrap gap-2">
+                <span v-for="skill in conversion.gaps" :key="skill.id" class="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-stone-100 px-2.5 py-1 text-[11px] text-stone-600">{{ skill.name }}<button type="button" class="inline-flex items-center gap-1 font-medium text-teal-700 transition hover:text-teal-900 disabled:opacity-50" :disabled="gapPreparing === skill.id" @click="prepareGapInstall(skill.id)"><LoaderCircle v-if="gapPreparing === skill.id" class="size-3 animate-spin" /><Download v-else class="size-3" />安装</button></span>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="gapPrepared" class="notice-warning mt-5">
+            <div class="flex items-center gap-2 font-semibold"><ShieldAlert class="size-4" />{{ gapReport ? `扫描完成：${gapReport.risk_assessment.score}/100 · ${gapReport.risk_assessment.recommendation.replace(/_/g, ' ')}` : gapSkipped ? '已跳过扫描' : '选择安装前扫描方式' }}</div>
+            <div v-if="!gapReport && !gapSkipped" class="mt-3 flex flex-wrap gap-2"><button type="button" class="button-ghost border border-amber-300 bg-white" :disabled="gapScanning" @click="scanGap('skip')">跳过扫描</button><button type="button" class="button-primary" :disabled="gapScanning" @click="scanGap('fast')"><LoaderCircle v-if="gapScanning" class="size-4 animate-spin" />快速扫描</button><button type="button" class="button-secondary border-amber-300" :disabled="gapScanning" @click="scanGap('deep')"><Sparkles class="size-4" />深度扫描</button></div>
+            <div v-else class="mt-3 flex flex-wrap items-center gap-2"><select v-model="gapPrepared.target" class="select-field h-9 min-w-44 flex-1"><option v-for="target in gapPrepared.targets.filter((target) => target.id !== 'claude_desktop' && target.available)" :key="target.id" :value="target.id">{{ target.name }}</option></select><button type="button" class="button-primary" :disabled="gapInstalling" @click="installGap"><LoaderCircle v-if="gapInstalling" class="size-4 animate-spin" />{{ gapInstalling ? '正在安装' : '安装并更新 Prompt' }}</button></div>
+            <p class="mt-2 text-[11px]">扫描仅辅助判断，是否继续安装由你决定。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="surface overflow-hidden lg:sticky lg:top-[68px]">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 px-5 py-3.5">
+          <div><h2 class="section-title">实时预览</h2><p class="mt-1 text-[11px] text-stone-500">{{ loading ? '正在匹配 Skill' : conversion ? '已生成' : '等待输入' }}</p></div>
+          <div class="flex gap-2"><button type="button" class="button-secondary" :disabled="!conversion || refining" @click="refinePrompt"><LoaderCircle v-if="refining" class="size-4 animate-spin" /><Wand2 v-else class="size-4" />LLM 精炼</button><button type="button" class="button-secondary" :disabled="!conversion" @click="copyPrompt"><Check v-if="copied" class="size-4 text-emerald-600" /><Clipboard v-else class="size-4" />{{ copied ? '已复制' : '复制' }}</button></div>
+        </div>
+        <pre class="min-h-[34rem] whitespace-pre-wrap bg-stone-950 p-5 font-mono text-[12px] leading-6 text-stone-200">{{ loading ? '正在匹配已安装 skill...' : conversion?.prompt || '输入需求后将在此生成结构化 prompt。' }}</pre>
+      </section>
     </div>
   </section>
 </template>

@@ -1,24 +1,323 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-sans: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
 }
 
 :root {
-  color: #0f172a;
-  background: #f8fafc;
+  color: #292524;
+  background: #f5f5f4;
   font-family: var(--font-sans);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-color: #d6d3d1 transparent;
+  scrollbar-width: thin;
+}
+
+html,
+body,
+#app {
+  min-width: 960px;
+  min-height: 100vh;
+  margin: 0;
 }
 
 body {
-  margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
+  overflow-x: hidden;
 }
 
 button,
-input {
+input,
+textarea,
+select {
   font: inherit;
+  letter-spacing: 0;
+}
+
+button,
+select {
+  cursor: pointer;
+}
+
+button:disabled,
+select:disabled {
+  cursor: not-allowed;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
+}
+
+::selection {
+  color: #134e4a;
+  background: #ccfbf1;
+}
+
+@layer components {
+  .app-shell {
+    @apply flex min-h-screen bg-stone-100 text-stone-800;
+  }
+
+  .app-sidebar {
+    @apply fixed inset-y-0 left-0 z-30 flex w-[224px] flex-col border-r border-stone-200 bg-stone-50 px-3 pb-3 pt-4;
+  }
+
+  .brand-lockup {
+    @apply flex h-14 items-center gap-3 px-2;
+  }
+
+  .brand-mark {
+    @apply size-9 shrink-0;
+  }
+
+  .brand-name {
+    @apply truncate text-[13px] font-semibold text-stone-950;
+  }
+
+  .brand-edition {
+    @apply mt-0.5 text-[10px] font-medium uppercase text-stone-400;
+    letter-spacing: 0.08em;
+  }
+
+  .app-navigation {
+    @apply mt-6 flex-1;
+  }
+
+  .nav-section-label {
+    @apply mb-2 px-3 text-[10px] font-semibold uppercase text-stone-400;
+    letter-spacing: 0.1em;
+  }
+
+  .nav-item {
+    @apply mb-1 flex min-h-12 w-full items-center gap-3 rounded-md border border-transparent px-3 py-2 text-left text-stone-600 transition duration-150 ease-out hover:bg-white hover:text-stone-950;
+  }
+
+  .nav-item-active {
+    @apply border-stone-200 bg-white text-stone-950 shadow-[0_1px_2px_rgba(28,25,23,0.05)];
+  }
+
+  .nav-icon {
+    @apply size-[18px] shrink-0 text-stone-400 transition-colors;
+  }
+
+  .nav-item-active .nav-icon {
+    @apply text-teal-700;
+  }
+
+  .nav-title,
+  .nav-hint {
+    @apply block truncate;
+  }
+
+  .nav-title {
+    @apply text-[13px] font-medium;
+  }
+
+  .nav-hint {
+    @apply mt-0.5 text-[10px] text-stone-400;
+  }
+
+  .sidebar-footer {
+    @apply border-t border-stone-200 pt-3;
+  }
+
+  .app-workspace {
+    @apply ml-[224px] min-h-screen min-w-0 flex-1;
+  }
+
+  .workspace-bar {
+    @apply sticky top-0 z-20 flex h-12 items-center justify-between border-b border-stone-200 bg-white/95 px-7 backdrop-blur-sm;
+  }
+
+  .workspace-title {
+    @apply text-xs font-medium text-stone-500;
+  }
+
+  .workspace-status {
+    @apply inline-flex items-center gap-2 text-[11px] text-stone-400;
+  }
+
+  .status-dot {
+    @apply size-1.5 rounded-full bg-emerald-500;
+  }
+
+  .workspace-content {
+    @apply min-h-[calc(100vh-3rem)];
+  }
+
+  .page-shell {
+    @apply mx-auto w-full max-w-[1180px] px-7 py-7;
+  }
+
+  .page-header {
+    @apply mb-6 flex flex-wrap items-end justify-between gap-4;
+  }
+
+  .page-kicker {
+    @apply mb-1.5 text-[10px] font-semibold uppercase text-teal-700;
+    letter-spacing: 0.1em;
+  }
+
+  .page-title {
+    @apply text-[26px] font-semibold leading-tight text-stone-950;
+  }
+
+  .page-description {
+    @apply mt-2 text-[13px] leading-5 text-stone-500;
+  }
+
+  .surface {
+    @apply rounded-lg border border-stone-200 bg-white shadow-[0_1px_2px_rgba(28,25,23,0.04)];
+  }
+
+  .surface-muted {
+    @apply rounded-lg border border-stone-200 bg-stone-50;
+  }
+
+  .section-title {
+    @apply text-[13px] font-semibold text-stone-900;
+  }
+
+  .button-base {
+    @apply inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md px-3 text-[13px] font-medium transition duration-150 ease-out disabled:opacity-45;
+  }
+
+  .button-primary {
+    @apply inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md border border-teal-700 bg-teal-700 px-3 text-[13px] font-medium text-white shadow-[0_1px_2px_rgba(15,118,110,0.2)] transition duration-150 ease-out hover:border-teal-800 hover:bg-teal-800 disabled:opacity-45 active:translate-y-px;
+  }
+
+  .button-secondary {
+    @apply inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 text-[13px] font-medium text-stone-700 shadow-[0_1px_1px_rgba(28,25,23,0.03)] transition duration-150 ease-out hover:border-stone-400 hover:bg-stone-50 hover:text-stone-950 disabled:opacity-45 active:translate-y-px;
+  }
+
+  .button-ghost {
+    @apply inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md px-3 text-[13px] font-medium text-stone-500 transition duration-150 ease-out hover:bg-stone-100 hover:text-stone-900 disabled:opacity-45;
+  }
+
+  .button-danger {
+    @apply inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md border border-rose-200 bg-white px-3 text-[13px] font-medium text-rose-700 transition duration-150 ease-out hover:border-rose-300 hover:bg-rose-50 disabled:opacity-45 active:translate-y-px;
+  }
+
+  .icon-button {
+    @apply inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-stone-200 bg-white text-stone-500 transition duration-150 hover:border-stone-300 hover:bg-stone-50 hover:text-stone-900 disabled:opacity-45 active:translate-y-px;
+  }
+
+  .icon-button-primary {
+    @apply inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-teal-700 bg-teal-700 text-white transition duration-150 hover:bg-teal-800 disabled:border-stone-300 disabled:bg-stone-300 active:translate-y-px;
+  }
+
+  .field,
+  .select-field,
+  .textarea-field {
+    @apply w-full rounded-md border border-stone-300 bg-white text-stone-900 outline-none transition duration-150 placeholder:text-stone-400 hover:border-stone-400 focus:border-teal-600 focus:ring-2 focus:ring-teal-100;
+  }
+
+  .field,
+  .select-field {
+    @apply h-10 px-3 text-[13px];
+  }
+
+  .textarea-field {
+    @apply p-4 text-[13px] leading-6;
+  }
+
+  .field-label {
+    @apply block text-[12px] font-medium text-stone-700;
+  }
+
+  .notice-error {
+    @apply rounded-md border border-rose-200 bg-rose-50 px-3 py-2.5 text-[13px] text-rose-900;
+  }
+
+  .notice-warning {
+    @apply rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-[13px] text-amber-900;
+  }
+
+  .notice-success {
+    @apply rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-[13px] text-emerald-900;
+  }
+
+  .table-shell {
+    @apply overflow-hidden rounded-lg border border-stone-200 bg-white shadow-[0_1px_2px_rgba(28,25,23,0.04)];
+  }
+
+  .data-table {
+    @apply w-full table-fixed text-left text-[13px];
+  }
+
+  .data-table thead {
+    @apply border-b border-stone-200 bg-stone-50 text-[11px] font-medium text-stone-500;
+  }
+
+  .data-table tbody tr {
+    @apply border-b border-stone-100 last:border-b-0;
+  }
+
+  .data-table tbody > tr:not(.preview-row) {
+    @apply transition-colors hover:bg-stone-50/70;
+  }
+
+  .modal-backdrop {
+    @apply fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 p-5 backdrop-blur-[2px];
+    animation: fade-in 140ms ease-out;
+  }
+
+  .modal-panel {
+    @apply w-full rounded-lg border border-stone-200 bg-white p-6 shadow-[0_20px_50px_rgba(28,25,23,0.2)];
+    animation: modal-in 180ms ease-out;
+  }
+
+  .modal-icon-title {
+    @apply flex items-center gap-3 text-[15px] font-semibold text-stone-950;
+  }
+
+  .modal-icon {
+    @apply flex size-9 items-center justify-center rounded-md bg-teal-50 text-teal-700;
+  }
+}
+
+.page-enter-active,
+.page-leave-active {
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(3px);
+}
+
+.page-leave-to {
+  opacity: 0;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
