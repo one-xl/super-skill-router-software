@@ -7,6 +7,7 @@ mod scanner;
 mod settings;
 mod skillsmp;
 mod targets;
+mod translator;
 
 fn installation_migrations() -> Vec<tauri_plugin_sql::Migration> {
     vec![tauri_plugin_sql::Migration {
@@ -51,7 +52,8 @@ pub fn run() -> tauri::Result<()> {
             management::read_installed_skill_markdown,
             management::prepare_skill_uninstall,
             management::commit_skill_uninstall,
-            management::rollback_skill_uninstall
+            management::rollback_skill_uninstall,
+            translator::translate_markdown
         ])
         .run(tauri::generate_context!())
 }
