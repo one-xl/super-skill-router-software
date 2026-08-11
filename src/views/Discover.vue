@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { CloudDownload, LoaderCircle, RefreshCw, SlidersHorizontal, TerminalSquare } from "@lucide/vue";
+import { RefreshCw, SlidersHorizontal } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
 import SearchBar from "../components/SearchBar.vue";
 import SkillCard from "../components/SkillCard.vue";
@@ -12,9 +12,6 @@ const remoteSkills = ref<Skill[]>([]);
 const remoteLoading = ref(false);
 const remoteError = ref<string | null>(null);
 const remoteSearched = ref(false);
-const installCommand = ref("");
-const commandLoading = ref(false);
-const commandError = ref<string | null>(null);
 const remoteResults = computed<SkillSearchResult[]>(() => remoteSkills.value.map((skill) => ({ skill, score: 0, matchedFields: [] })));
 
 function fail(cause: unknown) {
@@ -39,26 +36,6 @@ async function searchRemote() {
   }
 }
 
-async function importCommand() {
-  if (commandLoading.value) return;
-  commandError.value = null;
-  if (!installCommand.value.trim()) {
-    commandError.value = "请粘贴 SkillsMP 详情页提供的安装命令。";
-    return;
-  }
-  commandLoading.value = true;
-  try {
-    const skill = await invoke<Skill>("import_skillsmp_command", { command: installCommand.value });
-    remoteSkills.value = [skill, ...remoteSkills.value.filter((item) => item.id !== skill.id)];
-    remoteSearched.value = true;
-    installCommand.value = "";
-  } catch (cause) {
-    commandError.value = fail(cause);
-  } finally {
-    commandLoading.value = false;
-  }
-}
-
 onMounted(() => { void store.load(); });
 </script>
 
@@ -75,24 +52,12 @@ onMounted(() => { void store.load(); });
       </button>
     </div>
 
-    <SearchBar v-model="store.query" :result-count="store.results.length" :loading="store.loading && !store.index" />
-
-    <div class="mt-3 flex flex-wrap items-center justify-between gap-3 border border-slate-200 bg-white px-4 py-3">
-      <p class="text-xs text-slate-500">远程搜索需要单独触发，避免实时调用受限 API。</p>
-      <button type="button" class="inline-flex h-9 items-center gap-2 border border-teal-300 bg-white px-3 text-sm font-medium text-teal-800 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50" :disabled="remoteLoading" @click="searchRemote"><LoaderCircle v-if="remoteLoading" class="size-4 animate-spin" /><CloudDownload v-else class="size-4" />搜索 SkillsMP</button>
-    </div>
+    <SearchBar v-model="store.query" :result-count="store.results.length" :loading="store.loading && !store.index" :searching="remoteLoading" @search="searchRemote" />
     <p v-if="remoteError" class="mt-3 border-l-4 border-amber-400 bg-amber-50 px-3 py-2 text-sm text-amber-900">{{ remoteError }}</p>
 
     <div class="mt-5 flex flex-wrap items-center gap-2">
       <span class="mr-1 inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500"><SlidersHorizontal class="size-3.5" />标签</span>
       <button v-for="tag in store.availableTags" :key="tag" type="button" class="rounded-full border px-3 py-1 text-xs transition" :class="store.activeTags.includes(tag) ? 'border-teal-600 bg-teal-600 text-white' : 'border-slate-200 bg-white text-slate-500 hover:border-teal-300 hover:text-teal-700'" :aria-pressed="store.activeTags.includes(tag)" @click="store.toggleTag(tag)">{{ tag }}</button>
-    </div>
-
-    <div class="mt-5 border border-slate-200 bg-white p-4">
-      <div class="flex items-center gap-2 text-sm font-semibold text-slate-800"><TerminalSquare class="size-4 text-teal-700" />从 SkillsMP 安装命令导入</div>
-      <div class="mt-3 flex flex-col gap-2 sm:flex-row"><input v-model="installCommand" class="h-10 min-w-0 flex-1 border border-slate-300 px-3 text-sm" placeholder="npx skills add https://github.com/owner/repo --skill skill-name" @keyup.enter="importCommand" /><button type="button" class="inline-flex h-10 items-center justify-center gap-2 bg-teal-600 px-3 text-sm font-medium text-white disabled:bg-slate-300" :disabled="commandLoading" @click="importCommand"><LoaderCircle v-if="commandLoading" class="size-4 animate-spin" /><CloudDownload v-else class="size-4" />解析来源</button></div>
-      <p class="mt-2 text-xs text-slate-500">仅解析 GitHub 地址和 skill 名称，不会执行 npx 或任何第三方命令。</p>
-      <p v-if="commandError" class="mt-2 text-xs text-rose-700">{{ commandError }}</p>
     </div>
 
     <div v-if="store.error" class="mt-5 border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="status">{{ store.error }}</div>

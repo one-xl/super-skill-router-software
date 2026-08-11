@@ -41,7 +41,6 @@ pub fn run() -> tauri::Result<()> {
             settings::save_settings,
             settings::refine_prompt,
             skillsmp::search_skillsmp,
-            skillsmp::import_skillsmp_command,
             install::prepare_skill_install,
             install::scan_prepared_skill,
             install::install_prepared_skill,
