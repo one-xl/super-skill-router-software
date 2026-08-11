@@ -100,3 +100,32 @@ export interface TargetInstallResult {
 export interface BatchInstallReport {
   results: TargetInstallResult[];
 }
+
+export interface ConverterSkill {
+  id: string;
+  name: string;
+  description: string;
+  whenToUse: string;
+  tags: string[];
+  frecency?: number;
+}
+
+export interface ScoredConverterSkill extends ConverterSkill {
+  score: number;
+}
+
+export interface ConversionResult {
+  scenario: "coding" | "refactor" | "debug" | "review" | "generic";
+  prompt: string;
+  selected: ScoredConverterSkill[];
+  gaps: ScoredConverterSkill[];
+}
+
+export interface InstallationRecord {
+  skill_name: string;
+  directory_name: string;
+  repository: string;
+  commit_sha: string;
+  target: TargetId;
+  status: "installed" | "packaged_for_upload";
+}

@@ -1,3 +1,4 @@
+mod converter;
 mod fetcher;
 mod install;
 mod packager;
@@ -35,7 +36,8 @@ pub fn run() -> tauri::Result<()> {
             install::prepare_skill_install,
             install::install_prepared_skill,
             install::reveal_packaged_skill,
-            targets::detect_skill_targets
+            targets::detect_skill_targets,
+            converter::convert_requirement
         ])
         .run(tauri::generate_context!())
 }
