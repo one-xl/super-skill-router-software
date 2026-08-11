@@ -6,12 +6,13 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import Discover from "./views/Discover.vue";
 import Compose from "./views/Compose.vue";
 import Manage from "./views/Manage.vue";
+import LocalIndex from "./views/LocalIndex.vue";
 import SettingsView from "./views/Settings.vue";
 import type { AppSettings } from "./types/skill";
 
 const SETUP_DISMISSED_KEY = "super-skill-router:skillsmp-setup-dismissed";
 const SKILLSMP_DOCS_URL = "https://skillsmp.com/zh/docs/api";
-const view = ref<"discover" | "compose" | "manage" | "settings">("discover");
+const view = ref<"discover" | "compose" | "manage" | "settings" | "index">("discover");
 const showSkillsMpSetup = ref(false);
 
 async function checkFirstRunSetup() {
@@ -45,10 +46,10 @@ onMounted(() => { void checkFirstRunSetup(); });
     <header class="border-b border-slate-200 bg-white">
       <div class="mx-auto flex h-16 max-w-6xl items-center justify-between px-6 lg:px-10">
         <div class="flex items-center gap-3"><div class="flex size-8 items-center justify-center rounded-lg bg-teal-600 text-white"><Network class="size-4" :stroke-width="2" /></div><span class="text-sm font-semibold text-slate-950">Super Skill Router</span></div>
-        <div class="flex items-center gap-4"><nav class="flex items-center gap-1 text-sm"><button type="button" class="h-8 px-2 text-slate-500 hover:text-teal-700" :class="view === 'discover' && 'font-semibold text-teal-700'" @click="view = 'discover'">发现</button><button type="button" class="inline-flex h-8 items-center gap-1 px-2 text-slate-500 hover:text-teal-700" :class="view === 'compose' && 'font-semibold text-teal-700'" @click="view = 'compose'"><Wand2 class="size-3.5" />转换器</button><button type="button" class="inline-flex h-8 items-center gap-1 px-2 text-slate-500 hover:text-teal-700" :class="view === 'manage' && 'font-semibold text-teal-700'" @click="view = 'manage'"><LayoutList class="size-3.5" />管理</button><button type="button" class="flex size-8 items-center justify-center text-slate-500 hover:text-teal-700" :class="view === 'settings' && 'text-teal-700'" title="设置" @click="view = 'settings'"><Settings class="size-4" /></button></nav><div class="inline-flex items-center gap-2 text-xs text-slate-500"><Database class="size-3.5 text-teal-600" />本地索引</div></div>
+        <div class="flex items-center gap-4"><nav class="flex items-center gap-1 text-sm"><button type="button" class="h-8 px-2 text-slate-500 hover:text-teal-700" :class="view === 'discover' && 'font-semibold text-teal-700'" @click="view = 'discover'">发现</button><button type="button" class="inline-flex h-8 items-center gap-1 px-2 text-slate-500 hover:text-teal-700" :class="view === 'compose' && 'font-semibold text-teal-700'" @click="view = 'compose'"><Wand2 class="size-3.5" />转换器</button><button type="button" class="inline-flex h-8 items-center gap-1 px-2 text-slate-500 hover:text-teal-700" :class="view === 'manage' && 'font-semibold text-teal-700'" @click="view = 'manage'"><LayoutList class="size-3.5" />管理</button><button type="button" class="flex size-8 items-center justify-center text-slate-500 hover:text-teal-700" :class="view === 'settings' && 'text-teal-700'" title="设置" @click="view = 'settings'"><Settings class="size-4" /></button></nav><button type="button" class="inline-flex h-8 items-center gap-2 text-xs text-slate-500 hover:text-teal-700" :class="view === 'index' && 'font-semibold text-teal-700'" @click="view = 'index'"><Database class="size-3.5 text-teal-600" />本地索引</button></div>
       </div>
     </header>
-    <main><Discover v-if="view === 'discover'" /><Compose v-else-if="view === 'compose'" /><Manage v-else-if="view === 'manage'" /><SettingsView v-else /></main>
+    <main><Discover v-if="view === 'discover'" /><Compose v-else-if="view === 'compose'" /><Manage v-else-if="view === 'manage'" /><LocalIndex v-else-if="view === 'index'" /><SettingsView v-else /></main>
 
     <div v-if="showSkillsMpSetup" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-5" role="dialog" aria-modal="true" aria-label="SkillsMP 配置建议">
       <section class="w-full max-w-md border border-slate-200 bg-white p-6 shadow-xl">

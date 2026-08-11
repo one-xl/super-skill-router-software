@@ -3,12 +3,14 @@ import { computed, ref } from "vue";
 import { CheckCircle2, Download, ExternalLink, FileText, GitBranch, LoaderCircle, ShieldAlert, Sparkles } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
 import { recordInstallations } from "../lib/database";
+import { openSkillSource } from "../lib/skill-source";
 import UploadGuide from "./UploadGuide.vue";
 import type { BatchInstallReport, PreparedInstall, ScanMode, ScanReport, SkillSearchResult, TargetDetection, TargetId } from "../types/skill";
 
 const props = defineProps<{ result: SkillSearchResult }>();
 const preparing = ref(false);
 const installing = ref(false);
+const openingSource = ref(false);
 const error = ref<string | null>(null);
 const prepared = ref<PreparedInstall | null>(null);
 const report = ref<ScanReport | null>(null);
@@ -21,6 +23,15 @@ const uploadPackages = computed(() => deployment.value?.results.flatMap((result)
 
 function failureMessage(cause: unknown) {
   return typeof cause === "string" ? cause : cause instanceof Error ? cause.message : "操作失败，请重试。";
+}
+
+async function openSource() {
+  if (openingSource.value) return;
+  openingSource.value = true;
+  error.value = null;
+  try { await openSkillSource(props.result.skill); }
+  catch (cause) { error.value = failureMessage(cause); }
+  finally { openingSource.value = false; }
 }
 
 async function prepareInstall() {
@@ -101,7 +112,7 @@ async function installSelectedTargets() {
           <LoaderCircle v-if="preparing" class="size-4 animate-spin" />
           <Download v-else class="size-4" :stroke-width="1.8" />
         </button>
-        <a class="flex size-9 items-center justify-center rounded-lg border border-slate-200 text-slate-400 transition hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700" :href="result.skill.source.rawUrl" target="_blank" rel="noreferrer" title="在 GitHub 查看 SKILL.md" aria-label="在 GitHub 查看 SKILL.md"><ExternalLink class="size-4" :stroke-width="1.8" /></a>
+        <button class="flex size-9 items-center justify-center rounded-lg border border-slate-200 text-slate-400 transition hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700 disabled:opacity-50" type="button" :disabled="openingSource" title="在 GitHub 查看 SKILL.md" aria-label="在 GitHub 查看 SKILL.md" @click="openSource"><LoaderCircle v-if="openingSource" class="size-4 animate-spin" /><ExternalLink v-else class="size-4" :stroke-width="1.8" /></button>
       </div>
     </div>
     <div v-if="error && !deployment" class="mt-4 border-l-4 border-rose-500 bg-rose-50 px-3 py-2 text-sm text-rose-900" role="alert">{{ error }}</div>
