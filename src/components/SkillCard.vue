@@ -2,14 +2,17 @@
 import { ref } from "vue";
 import { CheckCircle2, Download, ExternalLink, FileText, GitBranch, LoaderCircle, ShieldAlert } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
-import type { InstallOutcome, PreparedInstall, SkillSearchResult } from "../types/skill";
+import { recordInstallations } from "../lib/database";
+import type { BatchInstallReport, PreparedInstall, SkillSearchResult, TargetDetection, TargetId } from "../types/skill";
 
 const props = defineProps<{ result: SkillSearchResult }>();
 const preparing = ref(false);
 const installing = ref(false);
 const error = ref<string | null>(null);
 const prepared = ref<PreparedInstall | null>(null);
-const installedPath = ref<string | null>(null);
+const targets = ref<TargetDetection[]>([]);
+const selectedTargets = ref<TargetId[]>([]);
+const deployment = ref<BatchInstallReport | null>(null);
 
 function failureMessage(cause: unknown) {
   return typeof cause === "string" ? cause : cause instanceof Error ? cause.message : "操作失败，请重试。";
@@ -19,9 +22,15 @@ async function prepareInstall() {
   if (preparing.value) return;
   preparing.value = true;
   error.value = null;
-  installedPath.value = null;
+  deployment.value = null;
   try {
-    prepared.value = await invoke<PreparedInstall>("prepare_claude_code_install", { skill: props.result.skill });
+    const [nextPrepared, detections] = await Promise.all([
+      invoke<PreparedInstall>("prepare_skill_install", { skill: props.result.skill }),
+      invoke<TargetDetection[]>("detect_skill_targets"),
+    ]);
+    prepared.value = nextPrepared;
+    targets.value = detections;
+    selectedTargets.value = detections.filter((target) => target.available && target.id !== "claude_desktop").map((target) => target.id);
   } catch (cause) {
     error.value = failureMessage(cause);
   } finally {
@@ -29,13 +38,22 @@ async function prepareInstall() {
   }
 }
 
-async function installToClaudeCode() {
+async function installSelectedTargets() {
   if (!prepared.value || installing.value) return;
+  if (selectedTargets.value.length === 0) {
+    error.value = "请至少选择一个已探测到的自动部署目标。";
+    return;
+  }
   installing.value = true;
   error.value = null;
   try {
-    const outcome = await invoke<InstallOutcome>("install_prepared_claude_code", { token: prepared.value.token });
-    installedPath.value = outcome.path ?? null;
+    const report = await invoke<BatchInstallReport>("install_prepared_skill", { token: prepared.value.token, targets: selectedTargets.value });
+    deployment.value = report;
+    try {
+      await recordInstallations(props.result.skill, prepared.value.directory_name, report);
+    } catch (databaseError) {
+      error.value = `文件已部署，但安装记录写入失败：${failureMessage(databaseError)}`;
+    }
   } catch (cause) {
     error.value = failureMessage(cause);
   } finally {
@@ -66,20 +84,32 @@ async function installToClaudeCode() {
         </div>
       </div>
       <div class="flex shrink-0 items-center gap-2">
-        <button class="flex size-9 items-center justify-center rounded-lg border border-teal-600 bg-teal-600 text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300" type="button" :disabled="preparing || installing || !!installedPath" title="下载、扫描并准备安装到 Claude Code" @click="prepareInstall">
+        <button class="flex size-9 items-center justify-center rounded-lg border border-teal-600 bg-teal-600 text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300" type="button" :disabled="preparing || installing || !!deployment" title="下载、扫描并选择部署目标" @click="prepareInstall">
           <LoaderCircle v-if="preparing" class="size-4 animate-spin" />
           <Download v-else class="size-4" :stroke-width="1.8" />
         </button>
         <a class="flex size-9 items-center justify-center rounded-lg border border-slate-200 text-slate-400 transition hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700" :href="result.skill.source.rawUrl" target="_blank" rel="noreferrer" title="在 GitHub 查看 SKILL.md" aria-label="在 GitHub 查看 SKILL.md"><ExternalLink class="size-4" :stroke-width="1.8" /></a>
       </div>
     </div>
-    <div v-if="error" class="mt-4 border-l-4 border-rose-500 bg-rose-50 px-3 py-2 text-sm text-rose-900" role="alert">{{ error }}</div>
-    <div v-else-if="installedPath" class="mt-4 flex items-center gap-2 border-l-4 border-emerald-500 bg-emerald-50 px-3 py-2 text-sm text-emerald-900"><CheckCircle2 class="size-4" />已安装到 Claude Code：{{ installedPath }}</div>
+    <div v-if="error && !deployment" class="mt-4 border-l-4 border-rose-500 bg-rose-50 px-3 py-2 text-sm text-rose-900" role="alert">{{ error }}</div>
+    <div v-else-if="deployment" class="mt-4 border-l-4 border-emerald-500 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+      <div class="flex items-center gap-2"><CheckCircle2 class="size-4" />部署完成</div>
+      <ul class="mt-2 space-y-1 text-xs">
+        <li v-for="result in deployment.results" :key="result.target">{{ result.target_name }}：{{ result.outcome ? `已部署${result.reused_physical_install ? '（复用共享目录）' : ''}` : result.error }}</li>
+      </ul>
+      <p v-if="error" class="mt-2 border-t border-rose-200 pt-2 text-xs text-rose-800">{{ error }}</p>
+    </div>
     <div v-else-if="prepared" class="mt-4 border border-slate-200 bg-slate-50 p-3">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <p class="inline-flex items-center gap-2 text-sm font-medium text-slate-800"><ShieldAlert class="size-4" :class="prepared.report.risk_assessment.recommendation === 'SAFE' ? 'text-emerald-600' : 'text-rose-600'" />扫描完成：{{ prepared.report.risk_assessment.score }}/100 · {{ prepared.report.risk_assessment.recommendation.replace(/_/g, ' ') }}</p>
-        <button class="inline-flex h-9 items-center gap-2 bg-teal-600 px-3 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-slate-300" type="button" :disabled="installing" @click="installToClaudeCode"><LoaderCircle v-if="installing" class="size-4 animate-spin" />{{ installing ? '正在安装' : '继续安装到 Claude Code' }}</button>
+        <button class="inline-flex h-9 items-center gap-2 bg-teal-600 px-3 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-slate-300" type="button" :disabled="installing || selectedTargets.length === 0" @click="installSelectedTargets"><LoaderCircle v-if="installing" class="size-4 animate-spin" />{{ installing ? '正在部署' : '部署到所选目标' }}</button>
       </div>
+      <fieldset class="mt-3 grid gap-2 sm:grid-cols-2">
+        <label v-for="target in targets" :key="target.id" class="flex items-center justify-between gap-3 border border-slate-200 bg-white px-3 py-2 text-sm" :class="target.id === 'claude_desktop' ? 'opacity-60' : ''">
+          <span class="flex items-center gap-2"><input v-model="selectedTargets" type="checkbox" :value="target.id" :disabled="!target.available || target.id === 'claude_desktop'" />{{ target.name }}</span>
+          <span class="text-xs text-slate-500">{{ target.id === 'claude_desktop' ? '待上传（M5）' : target.available ? '已探测' : '未检测到' }}</span>
+        </label>
+      </fieldset>
       <p class="mt-2 text-xs text-slate-500">扫描结果用于辅助决策；即使存在高风险提示，仍由你决定是否继续安装。</p>
     </div>
   </article>

@@ -15,6 +15,9 @@ impl SkillTarget for ClaudeDesktopTarget {
     fn detect(&self) -> Option<PathBuf> {
         None
     }
+    fn install_key(&self) -> String {
+        "claude-desktop-account".into()
+    }
     fn install(&self, _: &LocalSkill) -> Result<InstallOutcome, String> {
         Err("Claude 桌面版没有本地 skills 目录；请在 M5 使用 zip 打包和上传引导。".into())
     }

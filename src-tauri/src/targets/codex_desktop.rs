@@ -27,14 +27,17 @@ impl SkillTarget for CodexDesktopTarget {
     fn detect(&self) -> Option<PathBuf> {
         self.shared_home.detect()
     }
-    fn install(&self, _: &LocalSkill) -> Result<InstallOutcome, String> {
-        Err("Codex 桌面版与 Codex CLI 共用 CODEX_HOME；部署将在 M4 合并执行。".into())
+    fn install_key(&self) -> String {
+        self.shared_home.install_key()
     }
-    fn uninstall(&self, _: &str) -> Result<(), String> {
-        Err("Codex 桌面版卸载将在 M4 提供。".into())
+    fn install(&self, skill: &LocalSkill) -> Result<InstallOutcome, String> {
+        self.shared_home.install(skill)
+    }
+    fn uninstall(&self, skill_name: &str) -> Result<(), String> {
+        self.shared_home.uninstall(skill_name)
     }
     fn list_installed(&self) -> Result<Vec<InstalledSkill>, String> {
-        Ok(Vec::new())
+        self.shared_home.list_installed()
     }
 }
 

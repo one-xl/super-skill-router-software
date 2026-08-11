@@ -45,6 +45,12 @@ impl SkillTarget for ClaudeCodeTarget {
         root.is_dir().then_some(root.join("skills"))
     }
 
+    fn install_key(&self) -> String {
+        self.skills_root()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "claude-code".into())
+    }
+
     fn install(&self, skill: &LocalSkill) -> Result<InstallOutcome, String> {
         validate_directory_name(&skill.directory_name)?;
         validate_source(&skill.source_dir)?;

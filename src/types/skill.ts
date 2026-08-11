@@ -79,3 +79,24 @@ export interface InstallOutcome {
   path?: string;
   zip_path?: string;
 }
+
+export type TargetId = "claude_code" | "codex_cli" | "codex_desktop" | "claude_desktop";
+
+export interface TargetDetection {
+  id: TargetId;
+  name: string;
+  path: string | null;
+  available: boolean;
+}
+
+export interface TargetInstallResult {
+  target: TargetId;
+  target_name: string;
+  outcome: InstallOutcome | null;
+  error: string | null;
+  reused_physical_install: boolean;
+}
+
+export interface BatchInstallReport {
+  results: TargetInstallResult[];
+}

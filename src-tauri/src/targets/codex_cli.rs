@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
-use super::{windows_home, InstallOutcome, InstalledSkill, LocalSkill, SkillTarget};
+use super::{
+    install_directory, list_directories, uninstall_directory, windows_home, InstallOutcome,
+    InstalledSkill, LocalSkill, SkillTarget,
+};
 
 pub struct CodexCliTarget {
     home: Option<PathBuf>,
@@ -43,14 +46,28 @@ impl SkillTarget for CodexCliTarget {
             None
         }
     }
-    fn install(&self, _: &LocalSkill) -> Result<InstallOutcome, String> {
-        Err("Codex CLI 部署将在 M4 提供。".into())
+    fn install_key(&self) -> String {
+        self.skills_root()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "codex-home".into())
     }
-    fn uninstall(&self, _: &str) -> Result<(), String> {
-        Err("Codex CLI 卸载将在 M4 提供。".into())
+    fn install(&self, skill: &LocalSkill) -> Result<InstallOutcome, String> {
+        let root = self
+            .skills_root()
+            .ok_or_else(|| "无法确定 CODEX_HOME，无法部署 Codex CLI。".to_string())?;
+        install_directory(skill, &root)
+    }
+    fn uninstall(&self, skill_name: &str) -> Result<(), String> {
+        let root = self
+            .skills_root()
+            .ok_or_else(|| "无法确定 CODEX_HOME，无法卸载 Codex CLI。".to_string())?;
+        uninstall_directory(&root, skill_name)
     }
     fn list_installed(&self) -> Result<Vec<InstalledSkill>, String> {
-        Ok(Vec::new())
+        let root = self
+            .skills_root()
+            .ok_or_else(|| "无法确定 CODEX_HOME，无法读取 Codex CLI skills。".to_string())?;
+        list_directories(&root)
     }
 }
 
@@ -72,5 +89,59 @@ mod tests {
             target.skills_root(),
             Some(home.path().join(".codex").join("skills"))
         );
+    }
+
+    #[test]
+    fn installs_and_uninstalls_complete_skill_under_custom_codex_home() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let source = workspace.path().join("source");
+        std::fs::create_dir_all(source.join("references")).expect("references");
+        std::fs::write(source.join("SKILL.md"), "---\nname: demo\n---\n").expect("skill");
+        std::fs::write(source.join("references").join("guide.md"), "full directory")
+            .expect("reference");
+        let codex_home = workspace.path().join("custom-codex");
+        let target =
+            CodexCliTarget::with_paths(workspace.path().join("home"), Some(codex_home.clone()));
+        let skill = LocalSkill {
+            directory_name: "demo-directory".into(),
+            source_dir: source,
+        };
+        let InstallOutcome::Installed { path } = target.install(&skill).expect("install") else {
+            panic!("expected installation")
+        };
+        assert_eq!(path, codex_home.join("skills").join("demo-directory"));
+        assert!(path.join("references").join("guide.md").is_file());
+        assert_eq!(target.list_installed().expect("list").len(), 1);
+        target.uninstall("demo-directory").expect("uninstall");
+        assert!(!path.exists());
+    }
+
+    #[test]
+    #[ignore = "writes a temporary skill into the real CODEX_HOME directory"]
+    fn installs_into_the_real_default_codex_home() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let source = workspace.path().join("source");
+        std::fs::create_dir_all(source.join("scripts")).expect("scripts");
+        std::fs::write(source.join("SKILL.md"), "---\nname: m4 smoke\n---\n").expect("skill");
+        std::fs::write(
+            source.join("scripts").join("check.txt"),
+            "complete directory",
+        )
+        .expect("nested file");
+        let target = CodexCliTarget::new();
+        let root = target.skills_root().expect("CODEX_HOME root");
+        let name = format!("super-skill-router-m4-smoke-{}", uuid::Uuid::new_v4());
+        let skill = LocalSkill {
+            directory_name: name.clone(),
+            source_dir: source,
+        };
+        let InstallOutcome::Installed { path } = target.install(&skill).expect("real install")
+        else {
+            panic!("expected installation")
+        };
+        assert!(path.starts_with(&root));
+        assert!(path.join("scripts").join("check.txt").is_file());
+        target.uninstall(&name).expect("real uninstall");
+        assert!(!path.exists());
     }
 }
