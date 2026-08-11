@@ -1,7 +1,24 @@
-# Tauri + Vue + TypeScript
+# Super Skill Router
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+Windows desktop application for discovering, scanning, deploying, and managing AI agent skills.
 
-## Recommended IDE Setup
+## Current milestone
 
-- [VS Code](https://code.visualstudio.com/) + [Vue - Official](https://marketplace.visualstudio.com/items?itemName=Vue.volar) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+M1 provides a Tauri 2, Vue 3, TypeScript, TailwindCSS, and Pinia foundation. The discover page loads the bundled static `index.json`, caches it locally, and searches it with uFuzzy. Search priority is `name` (3.0), `whenToUse` (2.5), then `description` (2.0). Interactive search never calls GitHub Code Search.
+
+## Run
+
+```powershell
+npm install
+npm run tauri dev
+```
+
+## Indexer
+
+`indexer/crawl.py` builds the static index every day through `.github/workflows/update-index.yml`. Each record contains the immutable commit SHA plus a complete skill-directory manifest. The application must download, scan, package, and deploy the whole directory tree, never only `SKILL.md`.
+
+```powershell
+python -m pip install -r indexer/requirements.txt
+$env:GITHUB_TOKEN = "<token>"
+python indexer/crawl.py
+```
