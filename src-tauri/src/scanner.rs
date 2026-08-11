@@ -7,7 +7,7 @@ use tauri_plugin_shell::ShellExt;
 
 const SCAN_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScanMode {
     Fast,
@@ -78,6 +78,14 @@ pub async fn scan_skill(
     mode: ScanMode,
 ) -> Result<ScanReport, String> {
     let directory = Path::new(&skill_path);
+    scan_directory(app, directory, mode).await
+}
+
+pub async fn scan_directory(
+    app: AppHandle,
+    directory: &Path,
+    mode: ScanMode,
+) -> Result<ScanReport, String> {
     if !directory.is_dir() {
         return Err(user_error(
             "请选择一个存在的 skill 文件夹，而不是单个 SKILL.md 文件。",
@@ -88,7 +96,7 @@ pub async fn scan_skill(
         .shell()
         .sidecar(mode.sidecar_name())
         .map_err(|error| user_error(format!("扫描组件不可用：{error}")))?
-        .args(mode.arguments(&skill_path));
+        .args(mode.arguments(&directory.to_string_lossy()));
     let output = tokio::time::timeout(SCAN_TIMEOUT, command.output())
         .await
         .map_err(|_| {

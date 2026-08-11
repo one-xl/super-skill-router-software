@@ -67,3 +67,15 @@ export interface ScanReport {
   execution_successful: boolean;
   analysis_completeness: unknown;
 }
+
+export interface PreparedInstall {
+  token: string;
+  directory_name: string;
+  report: ScanReport;
+}
+
+export interface InstallOutcome {
+  kind: "installed" | "packaged_for_upload";
+  path?: string;
+  zip_path?: string;
+}
