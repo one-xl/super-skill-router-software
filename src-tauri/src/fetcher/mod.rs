@@ -2,6 +2,7 @@ mod archive;
 mod raw;
 
 use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -60,11 +61,12 @@ pub async fn download_skill(
     })
 }
 
-/// SkillsMP discovers a GitHub directory but does not publish a file manifest or commit SHA.
-/// Resolve the selected ref once, then download that exact revision through codeload.
+/// Use SkillsMP's directory manifest as the primary source, while pinning every raw download
+/// to the resolved commit SHA. A codeload subtree extraction remains the failure fallback.
 pub async fn download_skillsmp_skill(
     skill: &RemoteSkill,
     destination_parent: &Path,
+    api_key: Option<&str>,
 ) -> Result<(LocalSkill, String), String> {
     if skill.remote_source != "skillsmp" {
         return Err("该远程 skill 的下载来源无效。".into());
@@ -75,15 +77,22 @@ pub async fn download_skillsmp_skill(
     std::fs::create_dir_all(destination_parent)
         .map_err(|error| format!("无法创建下载缓存目录：{error}"))?;
     let client = reqwest::Client::builder()
-        .user_agent("Super-Skill-Router/0.1")
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Super-Skill-Router/0.1")
+        .timeout(Duration::from_secs(45))
         .build()
         .map_err(|error| format!("无法初始化下载客户端：{error}"))?;
     let commit_sha = resolve_commit_sha(&client, skill).await?;
-    if let Err(error) =
-        archive::download_and_extract_tree(&client, skill, &commit_sha, &destination).await
-    {
+    let manifest_download =
+        download_from_skillsmp_manifest(&client, skill, &commit_sha, api_key, &destination).await;
+    if let Err(manifest_error) = manifest_download {
         let _ = remove_directory(&destination);
-        return Err(error);
+        archive::download_and_extract_tree(&client, skill, &commit_sha, &destination)
+            .await
+            .map_err(|archive_error| {
+                format!(
+                    "SkillsMP 目录接口下载失败：{manifest_error}；GitHub 归档回退也失败：{archive_error}"
+                )
+            })?;
     }
     if !destination.join("SKILL.md").is_file() {
         let _ = remove_directory(&destination);
@@ -96,6 +105,157 @@ pub async fn download_skillsmp_skill(
         },
         commit_sha,
     ))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillsMpContentsResponse {
+    files: Vec<SkillsMpContentFile>,
+    #[serde(default)]
+    limit_reason: Option<String>,
+    #[serde(default)]
+    skipped_files: u64,
+    #[serde(default)]
+    truncated: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillsMpContentFile {
+    path: String,
+    size: u64,
+    raw_url: String,
+}
+
+async fn download_from_skillsmp_manifest(
+    client: &reqwest::Client,
+    skill: &RemoteSkill,
+    commit_sha: &str,
+    api_key: Option<&str>,
+    destination: &Path,
+) -> Result<(), String> {
+    let manifest = fetch_skillsmp_manifest(client, skill, api_key).await?;
+    validate_skillsmp_manifest(skill, &manifest)?;
+    let pinned = RemoteSkill {
+        name: skill.name.clone(),
+        repo: skill.repo.clone(),
+        path: skill.path.clone(),
+        default_branch: skill.default_branch.clone(),
+        commit_sha: commit_sha.into(),
+        files: manifest
+            .files
+            .into_iter()
+            .map(|file| RemoteFile {
+                path: file.path,
+                size: file.size,
+            })
+            .collect(),
+        remote_source: skill.remote_source.clone(),
+    };
+    if let Err(raw_error) = raw::download(client, &pinned, destination).await {
+        let _ = remove_directory(&destination.to_path_buf());
+        archive::download_and_extract(client, &pinned, destination)
+            .await
+            .map_err(|archive_error| {
+                format!(
+                    "按 SkillsMP 文件清单下载失败：{raw_error}；归档回退也失败：{archive_error}"
+                )
+            })?;
+    }
+    verify_download(&pinned, destination)
+}
+
+async fn fetch_skillsmp_manifest(
+    client: &reqwest::Client,
+    skill: &RemoteSkill,
+    api_key: Option<&str>,
+) -> Result<SkillsMpContentsResponse, String> {
+    let mut repo_parts = skill.repo.split('/');
+    let owner = repo_parts
+        .next()
+        .ok_or_else(|| "SkillsMP 来源缺少仓库所有者。".to_string())?;
+    let repo = repo_parts
+        .next()
+        .ok_or_else(|| "SkillsMP 来源缺少仓库名称。".to_string())?;
+    let mut url = reqwest::Url::parse("https://skillsmp.com/api/github-contents")
+        .map_err(|error| format!("无法创建 SkillsMP 目录接口地址：{error}"))?;
+    url.query_pairs_mut()
+        .append_pair("owner", owner)
+        .append_pair("repo", repo)
+        .append_pair("path", skill.path.trim_matches('/'))
+        .append_pair("branch", &skill.default_branch);
+    let mut request = client
+        .get(url)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::ORIGIN, "https://skillsmp.com")
+        .header(reqwest::header::REFERER, "https://skillsmp.com/");
+    if let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) {
+        request = request.bearer_auth(api_key);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("无法调用 SkillsMP 目录接口：{error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("SkillsMP 目录接口返回 HTTP {status}。"));
+    }
+    response
+        .json()
+        .await
+        .map_err(|error| format!("SkillsMP 目录清单无法解析：{error}"))
+}
+
+fn validate_skillsmp_manifest(
+    skill: &RemoteSkill,
+    manifest: &SkillsMpContentsResponse,
+) -> Result<(), String> {
+    if manifest.truncated || manifest.skipped_files > 0 || manifest.limit_reason.is_some() {
+        return Err(format!(
+            "SkillsMP 返回的目录清单不完整（跳过 {} 个文件，原因：{}）。",
+            manifest.skipped_files,
+            manifest.limit_reason.as_deref().unwrap_or("已截断")
+        ));
+    }
+    if manifest.files.is_empty() {
+        return Err("SkillsMP 返回了空目录清单。".into());
+    }
+    for file in &manifest.files {
+        validate_relative_path(&file.path)?;
+        validate_skillsmp_raw_url(skill, file)?;
+    }
+    if !manifest.files.iter().any(|file| file.path == "SKILL.md") {
+        return Err("SkillsMP 目录清单缺少 SKILL.md。".into());
+    }
+    Ok(())
+}
+
+fn validate_skillsmp_raw_url(
+    skill: &RemoteSkill,
+    file: &SkillsMpContentFile,
+) -> Result<(), String> {
+    let url = reqwest::Url::parse(&file.raw_url)
+        .map_err(|_| format!("SkillsMP 返回了无效文件地址：{}", file.path))?;
+    if url.host_str() != Some("raw.githubusercontent.com") {
+        return Err(format!(
+            "SkillsMP 文件地址不是 GitHub raw 地址：{}",
+            file.path
+        ));
+    }
+    let expected_suffix = remote_path(skill, &file.path)?;
+    let expected_prefix = format!("/{}/{}/", skill.repo, skill.default_branch);
+    let actual_path = url.path().trim_start_matches('/');
+    let expected_path = format!(
+        "{}/{}/{}",
+        skill.repo, skill.default_branch, expected_suffix
+    );
+    if !url.path().starts_with(&expected_prefix) || actual_path != expected_path {
+        return Err(format!(
+            "SkillsMP 文件地址与目标 skill 不一致：{}",
+            file.path
+        ));
+    }
+    Ok(())
 }
 
 async fn resolve_commit_sha(
@@ -294,6 +454,34 @@ mod tests {
     #[test]
     fn rejects_parent_traversal() {
         assert!(validate_relative_path("scripts/../../outside").is_err());
+    }
+
+    #[test]
+    fn accepts_complete_skillsmp_manifest() {
+        let skill = skill("skills/frontend-design");
+        let manifest = SkillsMpContentsResponse {
+            files: vec![SkillsMpContentFile {
+                path: "SKILL.md".into(),
+                size: 8_260,
+                raw_url: "https://raw.githubusercontent.com/owner/repository/main/skills/frontend-design/SKILL.md".into(),
+            }],
+            limit_reason: None,
+            skipped_files: 0,
+            truncated: false,
+        };
+        assert!(validate_skillsmp_manifest(&skill, &manifest).is_ok());
+    }
+
+    #[test]
+    fn rejects_truncated_skillsmp_manifest() {
+        let skill = skill("skills/frontend-design");
+        let manifest = SkillsMpContentsResponse {
+            files: Vec::new(),
+            limit_reason: Some("file_limit".into()),
+            skipped_files: 2,
+            truncated: true,
+        };
+        assert!(validate_skillsmp_manifest(&skill, &manifest).is_err());
     }
 
     #[tokio::test]

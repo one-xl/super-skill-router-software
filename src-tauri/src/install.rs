@@ -52,7 +52,8 @@ pub async fn prepare_skill_install(
         .join("pending-installs")
         .join(&token);
     let (downloaded, commit_sha) = if skill.remote_source == "skillsmp" {
-        fetcher::download_skillsmp_skill(&skill, &cache).await?
+        let skillsmp_api_key = settings::skillsmp_api_key(&app).ok();
+        fetcher::download_skillsmp_skill(&skill, &cache, skillsmp_api_key.as_deref()).await?
     } else {
         let commit_sha = skill.commit_sha.clone();
         (fetcher::download_skill(&skill, &cache).await?, commit_sha)

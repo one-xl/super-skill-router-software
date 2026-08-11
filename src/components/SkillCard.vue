@@ -91,7 +91,7 @@ async function installSelectedTargets() {
         </p>
         <div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-slate-400">
           <span class="inline-flex items-center gap-1.5"><GitBranch class="size-3.5" />{{ result.skill.repo }}</span>
-          <span class="inline-flex items-center gap-1.5"><FileText class="size-3.5" />{{ result.skill.remote_source === 'skillsmp' ? '完整目录将在下载时解析' : `${result.skill.files.length} 个文件` }}</span>
+          <span class="inline-flex items-center gap-1.5"><FileText class="size-3.5" />{{ result.skill.remote_source === 'skillsmp' ? '使用 SkillsMP 清单下载完整目录' : `${result.skill.files.length} 个文件` }}</span>
           <span>{{ result.skill.remote_source === 'skillsmp' ? '下载时锁定 commit' : `固定版本 ${result.skill.commit_sha.slice(0, 8)}` }}</span>
           <span v-for="tag in result.skill.tags" :key="tag" class="rounded bg-slate-100 px-2 py-0.5 text-slate-500">#{{ tag }}</span>
         </div>

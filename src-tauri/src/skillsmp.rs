@@ -253,7 +253,7 @@ fn command_discovered_skill(
         name: requested_skill.into(),
         description: format!("从 SkillsMP 安装命令解析：{repo}/{path}"),
         when_to_use:
-            "从 SkillsMP 安装命令导入；下载时将锁定 GitHub commit SHA 并提取完整 skill 目录。"
+            "从 SkillsMP 安装命令导入；下载时使用 SkillsMP 目录清单，并锁定 GitHub commit SHA。"
                 .into(),
         tags: vec!["SkillsMP 命令".into()],
         repo: repo.into(),
@@ -296,7 +296,7 @@ fn to_discovered_skill(item: SkillsMpItem) -> Result<DiscoveredSkill, String> {
         name: item.name,
         description: item.description,
         when_to_use:
-            "来自 SkillsMP 的远程发现结果；下载时将锁定 GitHub commit SHA 并提取完整 skill 目录。"
+            "来自 SkillsMP 的远程发现结果；下载时使用 SkillsMP 目录清单，并锁定 GitHub commit SHA。"
                 .into(),
         tags,
         repo: location.repo.clone(),
