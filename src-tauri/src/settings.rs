@@ -162,6 +162,23 @@ fn migrate_secret(value: &str, name: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_credential_manager_round_trip() {
+        let name = format!("test-{}", uuid::Uuid::new_v4());
+        write_secret(&name, "credential-test-value").expect("write credential");
+        let loaded = read_secret(&name).expect("read credential");
+        assert_eq!(loaded.as_deref(), Some("credential-test-value"));
+        credential(&name)
+            .expect("open credential")
+            .delete_credential()
+            .expect("remove credential");
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RefineRequest {
