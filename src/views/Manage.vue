@@ -208,7 +208,8 @@ onMounted(() => { void load(); });
 
       <section class="mt-5 overflow-x-auto border border-slate-200 bg-white">
         <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3"><h2 class="text-sm font-semibold text-slate-900">多端同步矩阵</h2><span class="text-xs text-slate-500">预览会显示在选中 skill 的正下方</span></div>
-        <table class="min-w-full text-left text-sm">
+        <table class="w-full min-w-[56rem] table-fixed text-left text-sm">
+          <colgroup><col class="w-[22%]" /><col v-for="target in targets" :key="target" class="w-[15%]" /><col class="w-[18%]" /></colgroup>
           <thead class="bg-slate-50 text-xs text-slate-500"><tr><th class="px-4 py-3">Skill</th><th v-for="target in targets" :key="target" class="px-3 py-3">{{ labels[target] }}</th><th class="px-3 py-3">操作</th></tr></thead>
           <tbody>
             <template v-for="row in rows" :key="row.directory_name">
@@ -232,7 +233,8 @@ onMounted(() => { void load(); });
           <span class="text-xs" :class="activeInventory?.error ? 'text-rose-700' : 'text-slate-500'">{{ activeInventory?.error ?? `${applicationRows.length} 个 Skill` }}</span>
         </div>
         <div class="overflow-x-auto">
-          <table class="min-w-full text-left text-sm">
+          <table class="w-full min-w-[48rem] table-fixed text-left text-sm">
+            <colgroup><col class="w-[24%]" /><col class="w-[14%]" /><col class="w-[12%]" /><col class="w-[36%]" /><col class="w-[14%]" /></colgroup>
             <thead class="bg-slate-50 text-xs text-slate-500"><tr><th class="px-4 py-3">Skill</th><th class="px-3 py-3">状态</th><th class="px-3 py-3">版本</th><th class="px-3 py-3">路径 / 上传包</th><th class="px-3 py-3">操作</th></tr></thead>
             <tbody>
               <template v-for="row in applicationRows" :key="row.directory_name">
