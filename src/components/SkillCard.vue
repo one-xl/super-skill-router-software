@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { CheckCircle2, Download, ExternalLink, FileText, GitBranch, LoaderCircle, ShieldAlert } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
 import { recordInstallations } from "../lib/database";
+import UploadGuide from "./UploadGuide.vue";
 import type { BatchInstallReport, PreparedInstall, SkillSearchResult, TargetDetection, TargetId } from "../types/skill";
 
 const props = defineProps<{ result: SkillSearchResult }>();
@@ -13,6 +14,7 @@ const prepared = ref<PreparedInstall | null>(null);
 const targets = ref<TargetDetection[]>([]);
 const selectedTargets = ref<TargetId[]>([]);
 const deployment = ref<BatchInstallReport | null>(null);
+const uploadPackages = computed(() => deployment.value?.results.flatMap((result) => result.outcome?.kind === "packaged_for_upload" && result.outcome.zip_path ? [{ targetName: result.target_name, zipPath: result.outcome.zip_path }] : []) ?? []);
 
 function failureMessage(cause: unknown) {
   return typeof cause === "string" ? cause : cause instanceof Error ? cause.message : "操作失败，请重试。";
@@ -95,8 +97,9 @@ async function installSelectedTargets() {
     <div v-else-if="deployment" class="mt-4 border-l-4 border-emerald-500 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
       <div class="flex items-center gap-2"><CheckCircle2 class="size-4" />部署完成</div>
       <ul class="mt-2 space-y-1 text-xs">
-        <li v-for="result in deployment.results" :key="result.target">{{ result.target_name }}：{{ result.outcome ? `已部署${result.reused_physical_install ? '（复用共享目录）' : ''}` : result.error }}</li>
+        <li v-for="result in deployment.results" :key="result.target">{{ result.target_name }}：{{ result.outcome?.kind === 'packaged_for_upload' ? '已打包，待上传' : result.outcome ? `已部署${result.reused_physical_install ? '（复用共享目录）' : ''}` : result.error }}</li>
       </ul>
+      <UploadGuide v-if="uploadPackages.length" :packages="uploadPackages" />
       <p v-if="error" class="mt-2 border-t border-rose-200 pt-2 text-xs text-rose-800">{{ error }}</p>
     </div>
     <div v-else-if="prepared" class="mt-4 border border-slate-200 bg-slate-50 p-3">
@@ -105,9 +108,9 @@ async function installSelectedTargets() {
         <button class="inline-flex h-9 items-center gap-2 bg-teal-600 px-3 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-slate-300" type="button" :disabled="installing || selectedTargets.length === 0" @click="installSelectedTargets"><LoaderCircle v-if="installing" class="size-4 animate-spin" />{{ installing ? '正在部署' : '部署到所选目标' }}</button>
       </div>
       <fieldset class="mt-3 grid gap-2 sm:grid-cols-2">
-        <label v-for="target in targets" :key="target.id" class="flex items-center justify-between gap-3 border border-slate-200 bg-white px-3 py-2 text-sm" :class="target.id === 'claude_desktop' ? 'opacity-60' : ''">
-          <span class="flex items-center gap-2"><input v-model="selectedTargets" type="checkbox" :value="target.id" :disabled="!target.available || target.id === 'claude_desktop'" />{{ target.name }}</span>
-          <span class="text-xs text-slate-500">{{ target.id === 'claude_desktop' ? '待上传（M5）' : target.available ? '已探测' : '未检测到' }}</span>
+        <label v-for="target in targets" :key="target.id" class="flex items-center justify-between gap-3 border border-slate-200 bg-white px-3 py-2 text-sm" :class="target.id === 'claude_desktop' ? 'border-amber-200' : ''">
+          <span class="flex items-center gap-2"><input v-model="selectedTargets" type="checkbox" :value="target.id" :disabled="target.id !== 'claude_desktop' && !target.available" />{{ target.name }}</span>
+          <span class="text-xs text-slate-500">{{ target.id === 'claude_desktop' ? '打包后待上传' : target.available ? '已探测' : '未检测到' }}</span>
         </label>
       </fieldset>
       <p class="mt-2 text-xs text-slate-500">扫描结果用于辅助决策；即使存在高风险提示，仍由你决定是否继续安装。</p>

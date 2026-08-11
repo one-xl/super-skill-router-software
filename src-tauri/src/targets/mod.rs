@@ -38,6 +38,16 @@ pub struct TargetAdapter {
 }
 
 pub fn target_adapters() -> Vec<TargetAdapter> {
+    target_adapters_with_upload_dir(
+        windows_home()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Downloads")
+            .join("Super Skill Router")
+            .join("Claude Desktop Uploads"),
+    )
+}
+
+pub fn target_adapters_with_upload_dir(upload_dir: PathBuf) -> Vec<TargetAdapter> {
     vec![
         TargetAdapter {
             id: TargetId::ClaudeCode,
@@ -53,7 +63,7 @@ pub fn target_adapters() -> Vec<TargetAdapter> {
         },
         TargetAdapter {
             id: TargetId::ClaudeDesktop,
-            target: Box::new(ClaudeDesktopTarget::new()),
+            target: Box::new(ClaudeDesktopTarget::with_output_dir(upload_dir)),
         },
     ]
 }

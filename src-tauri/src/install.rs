@@ -4,11 +4,14 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
+use tauri_plugin_opener::OpenerExt;
 use uuid::Uuid;
 
 use crate::fetcher::{self, RemoteSkill};
 use crate::scanner::{self, ScanMode, ScanReport};
-use crate::targets::{target_adapters, InstallOutcome, LocalSkill, TargetAdapter, TargetId};
+use crate::targets::{
+    target_adapters_with_upload_dir, InstallOutcome, LocalSkill, TargetAdapter, TargetId,
+};
 
 #[derive(Default)]
 pub struct PendingInstallStore(Mutex<HashMap<String, LocalSkill>>);
@@ -71,6 +74,7 @@ pub async fn prepare_skill_install(
 
 #[tauri::command]
 pub fn install_prepared_skill(
+    app: AppHandle,
     token: String,
     targets: Vec<TargetId>,
     pending: tauri::State<'_, PendingInstallStore>,
@@ -85,7 +89,22 @@ pub fn install_prepared_skill(
         .get(&token)
         .cloned()
         .ok_or_else(|| "安装准备已过期，请重新下载并扫描。".to_string())?;
-    let report = deploy_to_adapters(&skill, &targets, target_adapters());
+    let upload_dir = app
+        .path()
+        .download_dir()
+        .map_err(|error| format!("无法确定下载目录，无法创建 Claude Desktop 上传包：{error}"))?
+        .join("Super Skill Router")
+        .join("Claude Desktop Uploads");
+    let report = deploy_to_adapters(
+        &skill,
+        &targets,
+        target_adapters_with_upload_dir(upload_dir),
+    );
+    for result in &report.results {
+        if let Some(InstallOutcome::PackagedForUpload { zip_path }) = &result.outcome {
+            let _ = app.opener().reveal_item_in_dir(zip_path);
+        }
+    }
     let any_success = report.results.iter().any(|result| result.outcome.is_some());
     if any_success {
         let removed = pending
@@ -100,6 +119,21 @@ pub fn install_prepared_skill(
         }
     }
     Ok(report)
+}
+
+#[tauri::command]
+pub fn reveal_packaged_skill(app: AppHandle, zip_path: String) -> Result<(), String> {
+    let path = std::path::PathBuf::from(zip_path);
+    if path
+        .extension()
+        .is_none_or(|extension| !extension.eq_ignore_ascii_case("zip"))
+        || !path.is_file()
+    {
+        return Err("上传包不存在或不是 zip 文件。".into());
+    }
+    app.opener()
+        .reveal_item_in_dir(path)
+        .map_err(|error| format!("无法打开上传包所在目录：{error}"))
 }
 
 fn deploy_to_adapters(

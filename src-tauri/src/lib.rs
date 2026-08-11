@@ -1,5 +1,6 @@
 mod fetcher;
 mod install;
+mod packager;
 mod scanner;
 mod targets;
 
@@ -8,6 +9,11 @@ fn installation_migrations() -> Vec<tauri_plugin_sql::Migration> {
         version: 1,
         description: "create_installation_records",
         sql: "CREATE TABLE IF NOT EXISTS installation_records (id INTEGER PRIMARY KEY AUTOINCREMENT, skill_name TEXT NOT NULL, directory_name TEXT NOT NULL, repository TEXT NOT NULL, source_url TEXT NOT NULL, commit_sha TEXT NOT NULL, target TEXT NOT NULL, status TEXT NOT NULL, installed_path TEXT, installed_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(directory_name, target)); CREATE INDEX IF NOT EXISTS idx_installation_records_skill ON installation_records(skill_name);",
+        kind: tauri_plugin_sql::MigrationKind::Up,
+    }, tauri_plugin_sql::Migration {
+        version: 2,
+        description: "add_package_path",
+        sql: "ALTER TABLE installation_records ADD COLUMN package_path TEXT;",
         kind: tauri_plugin_sql::MigrationKind::Up,
     }]
 }
@@ -28,6 +34,7 @@ pub fn run() -> tauri::Result<()> {
             scanner::scan_skill,
             install::prepare_skill_install,
             install::install_prepared_skill,
+            install::reveal_packaged_skill,
             targets::detect_skill_targets
         ])
         .run(tauri::generate_context!())
