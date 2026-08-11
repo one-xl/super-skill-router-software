@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { AlertTriangle, Boxes, CloudUpload, Eye, FolderOpen, LayoutGrid, LoaderCircle, Monitor, MonitorCheck, RefreshCw, TerminalSquare, Trash2 } from "@lucide/vue";
+import { AlertTriangle, Boxes, ChevronUp, CloudUpload, Eye, FolderOpen, LayoutGrid, LoaderCircle, Monitor, MonitorCheck, RefreshCw, TerminalSquare, Trash2 } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
 import SkillPreviewPanel from "../components/SkillPreviewPanel.vue";
 import { deleteInstallationRecords, loadInstallationRecords } from "../lib/database";
@@ -59,8 +59,12 @@ function fail(cause: unknown) {
 
 function selectView(view: ManageView) {
   activeView.value = view;
-  preview.value = null;
+  closePreview();
   error.value = null;
+}
+
+function closePreview() {
+  preview.value = null;
 }
 
 function viewCount(view: ManageView) {
@@ -110,7 +114,7 @@ async function load() {
 
 async function showPreview(row: MatrixRow, target: TargetId) {
   if (preview.value?.directoryName === row.directory_name) {
-    preview.value = null;
+    closePreview();
     return;
   }
   if (!row.live.includes(target) || previewLoading.value) return;
@@ -211,9 +215,9 @@ onMounted(() => { void load(); });
               <tr class="border-t border-slate-200">
                 <td class="px-4 py-3 font-medium text-slate-900">{{ rowName(row) }}<p v-if="row.records.some((record) => record.commit_sha !== '')" class="mt-1 text-xs font-normal text-slate-500">{{ row.directory_name }}</p></td>
                 <td v-for="target in targets" :key="target" class="px-3 py-3"><span v-if="row.live.includes(target)" class="text-emerald-700">已安装</span><span v-else-if="row.records.some((record) => record.target === target && record.status === 'packaged_for_upload')" class="text-amber-700">待上传</span><span v-else-if="row.records.some((record) => record.target === target)" class="text-rose-700">记录缺失</span><span v-else class="text-slate-300">-</span></td>
-                <td class="px-3 py-3"><div class="flex gap-2"><button v-if="row.live.length" class="flex size-8 items-center justify-center border border-slate-300 disabled:opacity-50" :title="preview?.directoryName === row.directory_name ? '关闭 SKILL.md 预览' : '预览 SKILL.md'" :disabled="previewLoading === row.directory_name" @click="showOverviewPreview(row)"><LoaderCircle v-if="previewLoading === row.directory_name" class="size-4 animate-spin" /><Eye v-else class="size-4" /></button><button v-if="row.live.length" class="flex size-8 items-center justify-center border border-rose-200 text-rose-700 disabled:opacity-50" title="卸载本地副本" :disabled="working === row.directory_name" @click="requestUninstall(row, 'overview')"><LoaderCircle v-if="working === row.directory_name" class="size-4 animate-spin" /><Trash2 v-else class="size-4" /></button></div></td>
+                <td class="px-3 py-3"><div class="flex gap-2"><button v-if="row.live.length" type="button" class="flex size-8 items-center justify-center border disabled:opacity-50" :class="preview?.directoryName === row.directory_name ? 'border-teal-300 bg-teal-50 text-teal-800' : 'border-slate-300'" :title="preview?.directoryName === row.directory_name ? '收起 SKILL.md 预览' : '预览 SKILL.md'" :aria-expanded="preview?.directoryName === row.directory_name" :disabled="previewLoading === row.directory_name" @click.stop="showOverviewPreview(row)"><LoaderCircle v-if="previewLoading === row.directory_name" class="size-4 animate-spin" /><ChevronUp v-else-if="preview?.directoryName === row.directory_name" class="size-4" /><Eye v-else class="size-4" /></button><button v-if="row.live.length" class="flex size-8 items-center justify-center border border-rose-200 text-rose-700 disabled:opacity-50" title="卸载本地副本" :disabled="working === row.directory_name" @click="requestUninstall(row, 'overview')"><LoaderCircle v-if="working === row.directory_name" class="size-4 animate-spin" /><Trash2 v-else class="size-4" /></button></div></td>
               </tr>
-              <tr v-if="preview?.directoryName === row.directory_name" class="border-t border-teal-100 bg-teal-50/40"><td colspan="6" class="p-0"><SkillPreviewPanel :directory-name="preview.directoryName" :name="preview.name" :content="preview.content" @close="preview = null" /></td></tr>
+              <tr v-if="preview?.directoryName === row.directory_name" class="border-t border-teal-100 bg-teal-50/40"><td colspan="6" class="p-0"><SkillPreviewPanel :directory-name="preview.directoryName" :name="preview.name" :content="preview.content" @close="closePreview" /></td></tr>
             </template>
             <tr v-if="!loading && !rows.length"><td colspan="6" class="px-4 py-12 text-center text-slate-500">尚未检测到本地 skill。</td></tr>
           </tbody>
@@ -237,9 +241,9 @@ onMounted(() => { void load(); });
                   <td class="px-3 py-3"><span :class="statusClass(targetStatus(row))">{{ targetStatus(row) }}</span></td>
                   <td class="px-3 py-3 text-xs text-slate-500">{{ activeRecord(row)?.commit_sha ? activeRecord(row)?.commit_sha.slice(0, 8) : '-' }}</td>
                   <td class="max-w-sm px-3 py-3 text-xs text-slate-500"><span class="block truncate" :title="activePath(row) ?? activeRecord(row)?.package_path ?? ''">{{ activePath(row) ?? activeRecord(row)?.package_path ?? '-' }}</span></td>
-                  <td class="px-3 py-3"><div class="flex gap-2"><button v-if="activeTarget && row.live.includes(activeTarget)" class="flex size-8 items-center justify-center border border-slate-300 disabled:opacity-50" :title="preview?.directoryName === row.directory_name ? '关闭 SKILL.md 预览' : '预览 SKILL.md'" :disabled="previewLoading === row.directory_name" @click="showApplicationPreview(row)"><LoaderCircle v-if="previewLoading === row.directory_name" class="size-4 animate-spin" /><Eye v-else class="size-4" /></button><button v-if="activeTarget === 'claude_desktop' && activeRecord(row)?.package_path" class="flex size-8 items-center justify-center border border-amber-300 text-amber-800 disabled:opacity-50" title="打开上传包所在目录" :disabled="packageOpening === row.directory_name" @click="activeRecord(row) && revealPackage(activeRecord(row)!)"><LoaderCircle v-if="packageOpening === row.directory_name" class="size-4 animate-spin" /><FolderOpen v-else class="size-4" /></button><button v-if="activeTarget && row.live.includes(activeTarget)" class="flex size-8 items-center justify-center border border-rose-200 text-rose-700 disabled:opacity-50" title="从当前应用卸载" :disabled="working === row.directory_name" @click="requestUninstall(row, 'application')"><LoaderCircle v-if="working === row.directory_name" class="size-4 animate-spin" /><Trash2 v-else class="size-4" /></button></div></td>
+                  <td class="px-3 py-3"><div class="flex gap-2"><button v-if="activeTarget && row.live.includes(activeTarget)" type="button" class="flex size-8 items-center justify-center border disabled:opacity-50" :class="preview?.directoryName === row.directory_name ? 'border-teal-300 bg-teal-50 text-teal-800' : 'border-slate-300'" :title="preview?.directoryName === row.directory_name ? '收起 SKILL.md 预览' : '预览 SKILL.md'" :aria-expanded="preview?.directoryName === row.directory_name" :disabled="previewLoading === row.directory_name" @click.stop="showApplicationPreview(row)"><LoaderCircle v-if="previewLoading === row.directory_name" class="size-4 animate-spin" /><ChevronUp v-else-if="preview?.directoryName === row.directory_name" class="size-4" /><Eye v-else class="size-4" /></button><button v-if="activeTarget === 'claude_desktop' && activeRecord(row)?.package_path" class="flex size-8 items-center justify-center border border-amber-300 text-amber-800 disabled:opacity-50" title="打开上传包所在目录" :disabled="packageOpening === row.directory_name" @click="activeRecord(row) && revealPackage(activeRecord(row)!)"><LoaderCircle v-if="packageOpening === row.directory_name" class="size-4 animate-spin" /><FolderOpen v-else class="size-4" /></button><button v-if="activeTarget && row.live.includes(activeTarget)" class="flex size-8 items-center justify-center border border-rose-200 text-rose-700 disabled:opacity-50" title="从当前应用卸载" :disabled="working === row.directory_name" @click="requestUninstall(row, 'application')"><LoaderCircle v-if="working === row.directory_name" class="size-4 animate-spin" /><Trash2 v-else class="size-4" /></button></div></td>
                 </tr>
-                <tr v-if="preview?.directoryName === row.directory_name" class="border-t border-teal-100 bg-teal-50/40"><td colspan="5" class="p-0"><SkillPreviewPanel :directory-name="preview.directoryName" :name="preview.name" :content="preview.content" @close="preview = null" /></td></tr>
+                <tr v-if="preview?.directoryName === row.directory_name" class="border-t border-teal-100 bg-teal-50/40"><td colspan="5" class="p-0"><SkillPreviewPanel :directory-name="preview.directoryName" :name="preview.name" :content="preview.content" @close="closePreview" /></td></tr>
               </template>
               <tr v-if="!loading && !applicationRows.length"><td colspan="5" class="px-4 py-12 text-center text-slate-500">{{ activeTarget === 'claude_desktop' ? '尚未生成待上传包。' : '当前应用尚未检测到 skill。' }}</td></tr>
             </tbody>

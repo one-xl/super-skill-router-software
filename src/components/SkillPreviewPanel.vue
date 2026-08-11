@@ -4,7 +4,7 @@ const translationCache = new Map<string, string>();
 
 <script setup lang="ts">
 import { ref } from "vue";
-import { Languages, LoaderCircle } from "@lucide/vue";
+import { ChevronUp, Languages, LoaderCircle } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
 import MarkdownPreview from "./MarkdownPreview.vue";
 
@@ -49,7 +49,7 @@ async function toggleTranslation() {
       <h3 class="font-semibold text-slate-900">{{ name }} / SKILL.md</h3>
       <div class="flex items-center gap-2">
         <button type="button" class="inline-flex h-8 items-center gap-2 border border-teal-300 bg-white px-2.5 text-xs font-medium text-teal-800 hover:bg-teal-50 disabled:opacity-50" :disabled="translating" @click="toggleTranslation"><LoaderCircle v-if="translating" class="size-3.5 animate-spin" /><Languages v-else class="size-3.5" />{{ translating ? '翻译中' : translatedContent ? (showTranslated ? '查看原文' : '查看中文') : '翻译为中文' }}</button>
-        <button type="button" class="h-8 px-2 text-sm text-slate-500 hover:text-slate-900" @click="emit('close')">关闭</button>
+        <button type="button" class="inline-flex h-8 items-center gap-1.5 px-2 text-sm text-slate-500 hover:text-slate-900" aria-label="收起 SKILL.md 预览" @click.stop="emit('close')"><ChevronUp class="size-4" />收起预览</button>
       </div>
     </div>
     <p v-if="error" class="border-b border-rose-200 bg-rose-50 px-4 py-2 text-xs text-rose-800">{{ error }}</p>
