@@ -11,12 +11,12 @@ const DESKTOP_TARGETS: &[(&str, &[&str])] = &[
     ("claude_code_desktop", &["claude.exe"]),
 ];
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum CodexDesktopActivity {
-    Reconnecting(u32),
-    Running { terminal_failure_visible: bool },
-    Idle { terminal_failure_visible: bool },
-    Unknown,
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CodexDesktopSnapshot {
+    pub reconnect_attempt: Option<u32>,
+    pub running: bool,
+    pub idle: bool,
+    pub terminal_failure: Option<String>,
 }
 
 fn target_executables(target_id: &str) -> Option<&'static [&'static str]> {
@@ -27,7 +27,7 @@ fn target_executables(target_id: &str) -> Option<&'static [&'static str]> {
 
 #[cfg(target_os = "windows")]
 mod win {
-    use super::{target_executables, CodexDesktopActivity};
+    use super::{target_executables, CodexDesktopSnapshot};
     use std::collections::HashSet;
     use std::thread;
     use std::time::Duration;
@@ -169,7 +169,7 @@ mod win {
             .filter(|attempt| *attempt > 0)
     }
 
-    pub fn codex_desktop_activity() -> Result<CodexDesktopActivity, String> {
+    pub fn codex_desktop_snapshot() -> Result<CodexDesktopSnapshot, String> {
         let executables = target_executables("codex_desktop")
             .ok_or_else(|| "Codex Desktop 目标未配置。".to_string())?;
         let hwnd = visible_window(executables)?;
@@ -194,33 +194,26 @@ mod win {
             .into_iter()
             .filter_map(|element| element.get_name().ok())
             .collect::<Vec<_>>();
-        if let Some(attempt) = names
-            .iter()
-            .find_map(|text| reconnect_attempt_from_text(text))
-        {
-            return Ok(CodexDesktopActivity::Reconnecting(attempt));
-        }
-        let terminal_failure_visible = terminal_failure_near_composer(&automation, &root);
-        if names.iter().any(|name| is_stop_button(name)) {
-            return Ok(CodexDesktopActivity::Running {
-                terminal_failure_visible,
-            });
-        }
-        if names.iter().any(|name| is_send_button(name)) {
-            return Ok(CodexDesktopActivity::Idle {
-                terminal_failure_visible,
-            });
-        }
-        Ok(CodexDesktopActivity::Unknown)
+        Ok(CodexDesktopSnapshot {
+            reconnect_attempt: names
+                .iter()
+                .find_map(|text| reconnect_attempt_from_text(text)),
+            running: names.iter().any(|name| is_stop_button(name)),
+            idle: names.iter().any(|name| is_send_button(name)),
+            terminal_failure: terminal_failure_near_composer(&automation, &root),
+        })
     }
 
-    fn terminal_failure_near_composer(automation: &UIAutomation, root: &UIElement) -> bool {
+    fn terminal_failure_near_composer(
+        automation: &UIAutomation,
+        root: &UIElement,
+    ) -> Option<String> {
         let Ok(composer_rect) = composer(root).and_then(|element| {
             element
                 .get_bounding_rectangle()
                 .map_err(|error| format!("无法读取输入框位置：{error}"))
         }) else {
-            return false;
+            return None;
         };
         let candidates = automation
             .create_matcher()
@@ -231,36 +224,95 @@ mod win {
             .find_all()
             .unwrap_or_default();
 
-        candidates.into_iter().any(|element| {
+        candidates.into_iter().find_map(|element| {
             let Ok(name) = element.get_name() else {
-                return false;
+                return None;
             };
             if !is_terminal_failure_text(&name) {
-                return false;
+                return None;
             }
             let Ok(rect) = element.get_bounding_rectangle() else {
-                return false;
+                return None;
             };
             let vertical_gap = composer_rect.get_top() - rect.get_bottom();
             let center_x = (rect.get_left() + rect.get_right()) / 2;
-            (0..=180).contains(&vertical_gap)
+            ((0..=180).contains(&vertical_gap)
                 && center_x >= composer_rect.get_left()
-                && center_x <= composer_rect.get_right()
+                && center_x <= composer_rect.get_right())
+            .then(|| normalize_failure_text(&name))
         })
     }
 
     pub(super) fn is_terminal_failure_text(text: &str) -> bool {
         const MARKERS: &[&str] = &[
+            "error",
+            "something went wrong",
+            "problem occurred",
+            "failed",
+            "failure",
+            "unexpected status",
+            "service unavailable",
+            "unavailable",
+            "timeout",
+            "timed out",
+            "connection reset",
+            "connection closed",
+            "connection lost",
+            "disconnected",
+            "network failure",
+            "network error",
+            "cancelled",
+            "canceled",
+            "aborted",
+            "terminated",
+            "denied",
+            "forbidden",
+            "unauthorized",
             "exceeded retry limit",
             "too many requests",
             "rate limit exceeded",
             "retry limit exceeded",
+            "错误",
+            "出错",
+            "异常",
+            "失败",
+            "不可用",
+            "超时",
+            "连接中断",
+            "连接断开",
+            "网络中断",
+            "网络错误",
+            "已取消",
+            "被取消",
+            "已终止",
+            "被终止",
+            "拒绝",
+            "禁止",
+            "未授权",
             "已超过重试次数",
             "超过重试限制",
             "请求过多",
         ];
-        let lower = text.to_ascii_lowercase();
-        MARKERS.iter().any(|marker| lower.contains(marker))
+        let lower = text.trim().to_ascii_lowercase();
+        reconnect_attempt_from_text(&lower).is_none()
+            && (MARKERS.iter().any(|marker| lower.contains(marker))
+                || contains_http_error_status(&lower))
+    }
+
+    fn contains_http_error_status(text: &str) -> bool {
+        text.split(|character: char| !character.is_ascii_alphanumeric())
+            .any(|token| {
+                token.len() == 3
+                    && matches!(token.as_bytes().first(), Some(b'4' | b'5'))
+                    && token.bytes().all(|byte| byte.is_ascii_digit())
+            })
+    }
+
+    fn normalize_failure_text(text: &str) -> String {
+        text.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase()
     }
 
     fn normalized_button_name(name: &str) -> String {
@@ -329,10 +381,10 @@ pub fn send_text_to_desktop(target_id: &str, text: &str, submit: bool) -> Result
     }
 }
 
-pub fn codex_desktop_activity() -> Result<CodexDesktopActivity, String> {
+pub fn codex_desktop_snapshot() -> Result<CodexDesktopSnapshot, String> {
     #[cfg(target_os = "windows")]
     {
-        win::codex_desktop_activity()
+        win::codex_desktop_snapshot()
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -402,13 +454,27 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn recognizes_terminal_retry_failures() {
+    fn recognizes_terminal_failures() {
         assert!(super::win::is_terminal_failure_text(
             "exceeded retry limit, last status: 429 Too Many Requests"
         ));
         assert!(super::win::is_terminal_failure_text(
+            "unexpected status 503 Service Unavailable: Service temporarily unavailable"
+        ));
+        assert!(super::win::is_terminal_failure_text(
+            "Request failed with status 401"
+        ));
+        assert!(super::win::is_terminal_failure_text(
+            "Something went wrong while processing your request"
+        ));
+        assert!(super::win::is_terminal_failure_text(
+            "connection reset by peer"
+        ));
+        assert!(super::win::is_terminal_failure_text(
             "请求过多，已超过重试次数"
         ));
+        assert!(super::win::is_terminal_failure_text("服务暂时不可用"));
         assert!(!super::win::is_terminal_failure_text("正在重新连接 3/5"));
+        assert!(!super::win::is_terminal_failure_text("任务已完成"));
     }
 }

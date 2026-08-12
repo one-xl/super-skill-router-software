@@ -69,7 +69,7 @@ onUnmounted(() => { unlisten?.(); });
       <div>
         <p class="page-kicker">Monitor</p>
         <h1 class="page-title">桌面 Agent 自动恢复</h1>
-        <p class="page-description">识别第 5 次重连或本轮新出现的重试耗尽错误，任务回到空闲后自动发送恢复指令。</p>
+        <p class="page-description">识别本轮任务的错误终止，确认输入框回到可发送状态后自动发送恢复指令。</p>
       </div>
       <button v-if="active" type="button" class="button-secondary" :disabled="working" @click="stop"><Square class="size-4" />停止监控</button>
       <button v-else type="button" class="button-primary" :disabled="working || loading" @click="start"><LoaderCircle v-if="working" class="size-4 animate-spin" /><Play v-else class="size-4" />开始监控</button>
@@ -95,7 +95,7 @@ onUnmounted(() => { unlisten?.(); });
 
       <div v-if="status?.last_error" class="notice-error m-5">{{ status.last_error }}</div>
       <div class="border-t border-stone-200 bg-stone-50 px-5 py-3 text-[11px] text-stone-500">
-        <p>支持“正在重新连接 5/5”及“exceeded retry limit / 429 Too Many Requests”；仅处理本轮新出现的错误，历史消息不会触发。</p>
+        <p>支持重连耗尽、HTTP 错误、服务不可用、超时、拒绝等错误；仅处理本轮新出现且导致任务终止的错误，正常完成和历史消息不会触发。</p>
         <p v-if="status?.log_path" class="mt-1 truncate" :title="status.log_path">日志：{{ status.log_path }}</p>
       </div>
     </section>

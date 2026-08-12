@@ -14,7 +14,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
 use tokio::sync::{mpsc, Mutex};
 
-use crate::automation::CodexDesktopActivity;
+use crate::automation::CodexDesktopSnapshot;
 use crate::{automation, settings};
 
 const MAX_FAILURES: u32 = 5;
@@ -58,7 +58,7 @@ struct ReconnectTracker {
     awaiting_recovery_turn: bool,
     recovery_turn_deadline: Option<Instant>,
     running_seen: bool,
-    terminal_failure_baseline: Option<bool>,
+    terminal_failure_baseline: Option<String>,
     terminal_failure_observed: bool,
     terminal_failure_handled: bool,
 }
@@ -88,6 +88,7 @@ impl ReconnectTracker {
                     self.rearm_for_next_turn();
                 }
                 self.attempt = attempt;
+                self.running_seen = true;
                 if attempt >= MAX_FAILURES && !self.fired_for_attempt_five {
                     self.fired_for_attempt_five = true;
                     self.pending_recovery = true;
@@ -111,6 +112,7 @@ impl ReconnectTracker {
                 } else {
                     self.recovery_turn_deadline = None;
                     self.rearm_for_next_turn();
+                    self.running_seen = true;
                     (ReconnectEvent::NewTurn, false)
                 }
             }
@@ -124,44 +126,53 @@ impl ReconnectTracker {
         self.recovery_turn_deadline = Some(Instant::now() + Duration::from_secs(5));
     }
 
-    fn observe_activity(&mut self, activity: CodexDesktopActivity) -> (ReconnectEvent, bool) {
-        match activity {
-            CodexDesktopActivity::Reconnecting(attempt) => {
-                self.observe_event(ReconnectEvent::Attempt(attempt))
+    fn observe_snapshot(&mut self, snapshot: CodexDesktopSnapshot) -> (ReconnectEvent, bool) {
+        let mut event = snapshot
+            .reconnect_attempt
+            .map(|attempt| self.observe_event(ReconnectEvent::Attempt(attempt)).0)
+            .unwrap_or(ReconnectEvent::Ignore);
+
+        if snapshot.running {
+            if self.awaiting_recovery_turn {
+                self.rearm_for_next_turn();
             }
-            CodexDesktopActivity::Running {
-                terminal_failure_visible,
-            } => {
-                if self.awaiting_recovery_turn {
-                    self.rearm_for_next_turn();
-                }
-                if self.terminal_failure_baseline.is_none() {
-                    self.terminal_failure_baseline = Some(terminal_failure_visible);
-                } else if terminal_failure_visible && self.terminal_failure_baseline == Some(false)
-                {
-                    self.terminal_failure_observed = true;
-                }
-                self.running_seen = true;
-                (ReconnectEvent::NewTurn, false)
+            if !self.running_seen {
+                // An error already visible when monitoring first sees a running
+                // turn is treated as the baseline, not as a new failure.
+                self.terminal_failure_baseline = snapshot.terminal_failure.clone();
             }
-            CodexDesktopActivity::Idle {
-                terminal_failure_visible,
-            } => {
-                let new_terminal_failure = self.running_seen
-                    && terminal_failure_visible
-                    && (self.terminal_failure_observed
-                        || self.terminal_failure_baseline == Some(false))
-                    && !self.terminal_failure_handled;
-                let should_recover =
-                    (self.pending_recovery || new_terminal_failure) && !self.awaiting_recovery_turn;
-                if should_recover {
-                    self.pending_recovery = false;
-                    self.terminal_failure_handled = true;
-                }
-                (ReconnectEvent::Connected, should_recover)
+            self.running_seen = true;
+            if snapshot.terminal_failure.is_none() {
+                // The previous turn's banner can remain briefly after submit.
+                // Once it disappears, identical text appearing again is new.
+                self.terminal_failure_baseline = None;
             }
-            CodexDesktopActivity::Unknown => (ReconnectEvent::Ignore, false),
+            if event == ReconnectEvent::Ignore {
+                event = ReconnectEvent::NewTurn;
+            }
         }
+
+        if self.running_seen
+            && snapshot.terminal_failure.is_some()
+            && snapshot.terminal_failure != self.terminal_failure_baseline
+        {
+            self.terminal_failure_observed = true;
+        }
+
+        let should_recover = snapshot.idle
+            && snapshot.terminal_failure.is_some()
+            && self.running_seen
+            && self.terminal_failure_observed
+            && !self.terminal_failure_handled
+            && !self.awaiting_recovery_turn;
+        if should_recover {
+            self.pending_recovery = false;
+            self.terminal_failure_handled = true;
+        }
+        if snapshot.idle && event == ReconnectEvent::Ignore {
+            event = ReconnectEvent::Connected;
+        }
+        (event, should_recover)
     }
 
     fn rearm_for_next_turn(&mut self) {
@@ -372,13 +383,13 @@ async fn tail_codex_log(
                     if ui_poll_ticks >= 3 {
                         ui_poll_ticks = 0;
                         let desktop_activity = tauri::async_runtime::spawn_blocking(
-                            automation::codex_desktop_activity,
+                            automation::codex_desktop_snapshot,
                         )
                         .await
                         .map_err(|error| format!("读取 ChatGPT Desktop 重连状态失败：{error}"))?;
                         match desktop_activity {
                             Ok(activity) => {
-                                let (event, should_recover) = tracker.observe_activity(activity);
+                                let (event, should_recover) = tracker.observe_snapshot(activity);
                                 apply_reconnect_event(&app, &monitors, &target_id, event).await;
                                 if should_recover
                                     && send_recovery(&app, &monitors, &target_id, &recovery_text)
@@ -513,7 +524,7 @@ pub async fn list_desktop_monitors(
 mod tests {
     use std::time::{Duration, Instant};
 
-    use crate::automation::CodexDesktopActivity;
+    use crate::automation::CodexDesktopSnapshot;
 
     use super::{parse_codex_connection_event, ReconnectEvent, ReconnectTracker};
 
@@ -521,15 +532,28 @@ mod tests {
         format!("info [AppServerConnection] app_server_connection.state_changed next=connecting reconnectAttempt={attempt}")
     }
 
-    fn running(terminal_failure_visible: bool) -> CodexDesktopActivity {
-        CodexDesktopActivity::Running {
-            terminal_failure_visible,
+    fn running(error: Option<&str>) -> CodexDesktopSnapshot {
+        CodexDesktopSnapshot {
+            running: true,
+            terminal_failure: error.map(str::to_string),
+            ..Default::default()
         }
     }
 
-    fn idle(terminal_failure_visible: bool) -> CodexDesktopActivity {
-        CodexDesktopActivity::Idle {
-            terminal_failure_visible,
+    fn idle(error: Option<&str>) -> CodexDesktopSnapshot {
+        CodexDesktopSnapshot {
+            idle: true,
+            terminal_failure: error.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    fn reconnecting_idle(attempt: u32, error: &str) -> CodexDesktopSnapshot {
+        CodexDesktopSnapshot {
+            reconnect_attempt: Some(attempt),
+            idle: true,
+            terminal_failure: Some(error.to_string()),
+            ..Default::default()
         }
     }
 
@@ -542,99 +566,109 @@ mod tests {
     }
 
     #[test]
-    fn waits_for_idle_after_attempt_five() {
+    fn reconnect_attempt_without_error_never_recovers() {
         let mut tracker = ReconnectTracker::default();
         for attempt in 1..5 {
             assert!(!tracker.observe(&line(attempt)).1);
         }
         assert!(!tracker.observe(&line(5)).1);
-        assert!(!tracker.observe(&line(5)).1);
-        tracker.observe_activity(CodexDesktopActivity::Running {
-            terminal_failure_visible: false,
-        });
+        assert!(!tracker.observe_snapshot(idle(None)).1);
+    }
+
+    #[test]
+    fn screenshot_state_with_attempt_five_error_and_idle_recovers() {
+        let mut tracker = ReconnectTracker::default();
         assert!(
             tracker
-                .observe_activity(CodexDesktopActivity::Idle {
-                    terminal_failure_visible: false
-                })
+                .observe_snapshot(reconnecting_idle(
+                    5,
+                    "unexpected status 503 service unavailable"
+                ))
                 .1
         );
         assert!(
             !tracker
-                .observe_activity(CodexDesktopActivity::Idle {
-                    terminal_failure_visible: false
-                })
+                .observe_snapshot(reconnecting_idle(
+                    5,
+                    "unexpected status 503 service unavailable"
+                ))
                 .1
         );
     }
 
     #[test]
-    fn connected_event_preserves_pending_recovery_until_idle_ui() {
+    fn arbitrary_error_after_running_recovers_on_idle() {
         let mut tracker = ReconnectTracker::default();
-        tracker.observe(&line(5));
-        tracker.observe_event(ReconnectEvent::Connected);
-        tracker.observe(&line(5));
-        tracker.observe_activity(CodexDesktopActivity::Running {
-            terminal_failure_visible: false,
-        });
+        assert!(!tracker.observe_snapshot(running(None)).1);
         assert!(
             tracker
-                .observe_activity(CodexDesktopActivity::Idle {
-                    terminal_failure_visible: false
-                })
+                .observe_snapshot(idle(Some("unexpected status 503 service unavailable")))
                 .1
         );
     }
 
     #[test]
-    fn connected_log_does_not_clear_pending_recovery_before_idle_ui() {
+    fn turn_start_log_covers_a_failure_too_fast_for_running_ui_poll() {
         let mut tracker = ReconnectTracker::default();
-        tracker.observe_event(ReconnectEvent::Attempt(5));
-        tracker.observe_event(ReconnectEvent::Connected);
-        tracker.observe_activity(CodexDesktopActivity::Running {
-            terminal_failure_visible: false,
-        });
+        tracker.observe_event(ReconnectEvent::NewTurn);
         assert!(
             tracker
-                .observe_activity(CodexDesktopActivity::Idle {
-                    terminal_failure_visible: false
-                })
+                .observe_snapshot(idle(Some("connection reset by peer error")))
                 .1
         );
     }
 
     #[test]
-    fn desktop_ui_attempt_uses_the_same_single_recovery_guard() {
+    fn error_visible_while_running_waits_until_idle() {
         let mut tracker = ReconnectTracker::default();
-        assert!(!tracker.observe_event(ReconnectEvent::Attempt(5)).1);
-        assert!(!tracker.observe_event(ReconnectEvent::Attempt(5)).1);
-        tracker.observe_activity(CodexDesktopActivity::Running {
-            terminal_failure_visible: false,
-        });
+        assert!(!tracker.observe_snapshot(running(None)).1);
+        assert!(
+            !tracker
+                .observe_snapshot(running(Some("request failed with status 500")))
+                .1
+        );
         assert!(
             tracker
-                .observe_activity(CodexDesktopActivity::Idle {
-                    terminal_failure_visible: false
-                })
+                .observe_snapshot(idle(Some("request failed with status 500")))
                 .1
         );
     }
 
     #[test]
-    fn a_user_turn_rearms_when_the_recovery_turn_is_not_observed() {
+    fn normal_completion_does_not_recover() {
+        let mut tracker = ReconnectTracker::default();
+        assert!(!tracker.observe_snapshot(running(None)).1);
+        assert!(!tracker.observe_snapshot(idle(None)).1);
+    }
+
+    #[test]
+    fn historical_error_is_only_a_baseline() {
+        let mut tracker = ReconnectTracker::default();
+        assert!(
+            !tracker
+                .observe_snapshot(running(Some("old request failed")))
+                .1
+        );
+        assert!(!tracker.observe_snapshot(idle(Some("old request failed"))).1);
+    }
+
+    #[test]
+    fn recovery_rearms_for_the_next_failed_turn() {
+        let mut tracker = ReconnectTracker::default();
+        tracker.observe_snapshot(running(None));
+        assert!(tracker.observe_snapshot(idle(Some("request failed"))).1);
+        tracker.mark_recovery_sent();
+
+        assert!(!tracker.observe_snapshot(running(None)).1);
+        assert!(tracker.observe_snapshot(idle(Some("request failed"))).1);
+    }
+
+    #[test]
+    fn delayed_user_turn_log_rearms_after_recovery_window() {
         let mut tracker = ReconnectTracker::default();
         let start = Instant::now();
-        tracker.observe_event(ReconnectEvent::Attempt(5));
-        tracker.observe_activity(CodexDesktopActivity::Running {
-            terminal_failure_visible: false,
-        });
-        assert!(
-            tracker
-                .observe_activity(CodexDesktopActivity::Idle {
-                    terminal_failure_visible: false
-                })
-                .1
-        );
+        tracker.observe_snapshot(running(None));
+        assert!(tracker.observe_snapshot(idle(Some("request failed"))).1);
         tracker.mark_recovery_sent();
         assert_eq!(
             tracker
@@ -642,127 +676,19 @@ mod tests {
                 .0,
             ReconnectEvent::NewTurn
         );
-        tracker.observe_event(ReconnectEvent::Attempt(5));
-        tracker.observe_activity(CodexDesktopActivity::Running {
-            terminal_failure_visible: false,
-        });
-        assert!(
-            tracker
-                .observe_activity(CodexDesktopActivity::Idle {
-                    terminal_failure_visible: false
-                })
-                .1
-        );
     }
 
     #[test]
     fn immediate_recovery_turn_is_not_mistaken_for_a_new_user_turn() {
         let mut tracker = ReconnectTracker::default();
         let start = Instant::now();
-        tracker.observe_event(ReconnectEvent::Attempt(5));
-        tracker.observe_activity(CodexDesktopActivity::Running {
-            terminal_failure_visible: false,
-        });
-        assert!(
-            tracker
-                .observe_activity(CodexDesktopActivity::Idle {
-                    terminal_failure_visible: false
-                })
-                .1
-        );
+        tracker.observe_snapshot(running(None));
+        assert!(tracker.observe_snapshot(idle(Some("request failed"))).1);
         tracker.mark_recovery_sent();
         assert_eq!(
             tracker.observe_event_at(ReconnectEvent::NewTurn, start).0,
             ReconnectEvent::Ignore
         );
         assert!(!tracker.observe_event(ReconnectEvent::Attempt(5)).1);
-    }
-
-    #[test]
-    fn delayed_original_turn_log_cannot_cancel_pending_recovery() {
-        let mut tracker = ReconnectTracker::default();
-        tracker.observe_event(ReconnectEvent::Attempt(5));
-        assert_eq!(
-            tracker.observe_event(ReconnectEvent::NewTurn).0,
-            ReconnectEvent::Ignore
-        );
-        tracker.observe_activity(CodexDesktopActivity::Running {
-            terminal_failure_visible: false,
-        });
-        assert!(
-            tracker
-                .observe_activity(CodexDesktopActivity::Idle {
-                    terminal_failure_visible: false
-                })
-                .1
-        );
-    }
-
-    #[test]
-    fn running_then_idle_rearms_same_conversation_for_second_recovery() {
-        let mut tracker = ReconnectTracker::default();
-        tracker.observe_event(ReconnectEvent::Attempt(5));
-        tracker.observe_activity(CodexDesktopActivity::Running {
-            terminal_failure_visible: false,
-        });
-        assert!(
-            tracker
-                .observe_activity(CodexDesktopActivity::Idle {
-                    terminal_failure_visible: false
-                })
-                .1
-        );
-        tracker.mark_recovery_sent();
-
-        assert!(!tracker.observe_activity(running(false)).1);
-        tracker.observe_event(ReconnectEvent::Attempt(5));
-        assert!(tracker.observe_activity(idle(false)).1);
-    }
-
-    #[test]
-    fn lower_reconnect_attempt_rearms_when_running_state_was_missed() {
-        let mut tracker = ReconnectTracker::default();
-        tracker.observe_event(ReconnectEvent::Attempt(5));
-        tracker.observe_activity(running(false));
-        assert!(tracker.observe_activity(idle(false)).1);
-        tracker.mark_recovery_sent();
-
-        tracker.observe_event(ReconnectEvent::Attempt(1));
-        tracker.observe_event(ReconnectEvent::Attempt(5));
-        assert!(tracker.observe_activity(idle(false)).1);
-    }
-
-    #[test]
-    fn new_terminal_failure_after_running_triggers_recovery_once() {
-        let mut tracker = ReconnectTracker::default();
-        assert!(!tracker.observe_activity(running(false)).1);
-        assert!(tracker.observe_activity(idle(true)).1);
-        assert!(!tracker.observe_activity(idle(true)).1);
-    }
-
-    #[test]
-    fn terminal_failure_that_appears_while_still_running_triggers_on_idle() {
-        let mut tracker = ReconnectTracker::default();
-        assert!(!tracker.observe_activity(running(false)).1);
-        assert!(!tracker.observe_activity(running(true)).1);
-        assert!(tracker.observe_activity(idle(true)).1);
-    }
-
-    #[test]
-    fn historical_terminal_failure_does_not_trigger_recovery() {
-        let mut tracker = ReconnectTracker::default();
-        assert!(!tracker.observe_activity(running(true)).1);
-        assert!(!tracker.observe_activity(idle(true)).1);
-    }
-
-    #[test]
-    fn terminal_failure_rearms_for_the_next_same_conversation_turn() {
-        let mut tracker = ReconnectTracker::default();
-        tracker.observe_activity(running(false));
-        assert!(tracker.observe_activity(idle(true)).1);
-        tracker.mark_recovery_sent();
-
-        assert!(!tracker.observe_activity(running(false)).1);
-        assert!(tracker.observe_activity(idle(true)).1);
     }
 }

@@ -131,13 +131,13 @@ onMounted(async () => {
           <label class="flex cursor-pointer items-start justify-between gap-5 py-4">
             <span>
               <span class="block text-[13px] font-medium text-stone-800">启动软件时监控 ChatGPT Desktop（Codex）重连</span>
-              <span class="mt-1 block text-[11px] leading-5 text-stone-500">第 5 次重连或本轮新出现重试耗尽/429 错误，且任务回到空闲发送键后自动发送；同一对话可重复触发。</span>
+              <span class="mt-1 block text-[11px] leading-5 text-stone-500">仅当本轮任务因错误终止并恢复为空闲发送键时自动发送；正常完成不会触发，同一对话可重复恢复。</span>
             </span>
             <input v-model="settings.automation.startCodexRecoveryMonitorOnLaunch" type="checkbox" class="mt-0.5 size-4 shrink-0 accent-teal-700" />
           </label>
           <label class="block py-4">
-            <span class="block text-[13px] font-medium text-stone-800">第 5 次失败后的自动发送内容</span>
-            <span class="mt-1 block text-[11px] leading-5 text-stone-500">仅在 ChatGPT Desktop 显示“正在重新连接 5/5”后发送。留空会恢复为默认内容。</span>
+            <span class="block text-[13px] font-medium text-stone-800">任务报错终止后的自动发送内容</span>
+            <span class="mt-1 block text-[11px] leading-5 text-stone-500">检测到 ChatGPT Desktop 本轮报错终止后发送。留空会恢复为默认内容。</span>
             <input v-model="settings.automation.recoveryText" class="field mt-2" maxlength="1000" placeholder="继续并恢复todo-list" />
           </label>
         </div>
