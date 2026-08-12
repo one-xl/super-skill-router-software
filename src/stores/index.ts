@@ -1,7 +1,8 @@
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 import { searchSkills } from "../lib/search";
-import type { Skill, SkillIndex } from "../types/skill";
+import type { Skill, SkillIndex, SkillSearchResult } from "../types/skill";
+import { invoke } from "@tauri-apps/api/core";
 
 const CACHE_KEY = "super-skill-router:index:v1";
 const REMOVED_KEY = "super-skill-router:index-removed:v1";
@@ -19,10 +20,15 @@ export const useSkillIndexStore = defineStore("skill-index", () => {
   const error = ref<string | null>(null);
   const usingOfflineCache = ref(false);
   const removedIds = ref<string[]>(readRemovedIds());
+  const remoteSkills = ref<Skill[]>([]);
+  const remoteLoading = ref(false);
+  const remoteError = ref<string | null>(null);
+  const remoteSearched = ref(false);
 
   const availableTags = computed(() => [...new Set(skills.value.flatMap((skill) => skill.tags))].sort((a, b) => a.localeCompare(b)));
   const results = computed(() => searchSkills(skills.value, query.value, activeTags.value));
   const removedCount = computed(() => index.value?.skills.filter((skill) => removedIds.value.includes(skill.id)).length ?? 0);
+  const remoteResults = computed<SkillSearchResult[]>(() => remoteSkills.value.map((skill) => ({ skill, score: 0, matchedFields: [] })));
 
   function applyIndex(nextIndex: SkillIndex, offline: boolean) {
     index.value = nextIndex;
@@ -95,5 +101,23 @@ export const useSkillIndexStore = defineStore("skill-index", () => {
     activeTags.value = activeTags.value.includes(tag) ? activeTags.value.filter((value) => value !== tag) : [...activeTags.value, tag];
   }
 
-  return { index, skills, query, activeTags, loading, error, usingOfflineCache, availableTags, results, removedCount, load, toggleTag, removeSkills, restoreRemovedSkills };
+  async function searchRemote() {
+    if (remoteLoading.value) return;
+    remoteError.value = null;
+    if (query.value.trim().length < 2) {
+      remoteError.value = "请输入至少两个字符后再搜索 SkillsMP。";
+      return;
+    }
+    remoteLoading.value = true;
+    remoteSearched.value = true;
+    try {
+      remoteSkills.value = await invoke<Skill[]>("search_skillsmp", { request: { query: query.value, limit: 20 } });
+    } catch (cause) {
+      remoteError.value = typeof cause === "string" ? cause : cause instanceof Error ? cause.message : "远程搜索失败，请重试。";
+    } finally {
+      remoteLoading.value = false;
+    }
+  }
+
+  return { index, skills, query, activeTags, loading, error, usingOfflineCache, availableTags, results, removedCount, remoteSkills, remoteLoading, remoteError, remoteSearched, remoteResults, load, toggleTag, removeSkills, restoreRemovedSkills, searchRemote };
 });

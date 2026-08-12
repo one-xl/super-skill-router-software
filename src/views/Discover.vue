@@ -1,40 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { onMounted } from "vue";
 import { RefreshCw, SlidersHorizontal } from "@lucide/vue";
-import { invoke } from "@tauri-apps/api/core";
 import SearchBar from "../components/SearchBar.vue";
 import SkillCard from "../components/SkillCard.vue";
 import { useSkillIndexStore } from "../stores";
-import type { Skill, SkillSearchResult } from "../types/skill";
 
 const store = useSkillIndexStore();
-const remoteSkills = ref<Skill[]>([]);
-const remoteLoading = ref(false);
-const remoteError = ref<string | null>(null);
-const remoteSearched = ref(false);
-const remoteResults = computed<SkillSearchResult[]>(() => remoteSkills.value.map((skill) => ({ skill, score: 0, matchedFields: [] })));
-
-function fail(cause: unknown) {
-  return typeof cause === "string" ? cause : cause instanceof Error ? cause.message : "操作失败，请重试。";
-}
-
-async function searchRemote() {
-  if (remoteLoading.value) return;
-  remoteError.value = null;
-  if (store.query.trim().length < 2) {
-    remoteError.value = "请输入至少两个字符后再搜索 SkillsMP。";
-    return;
-  }
-  remoteLoading.value = true;
-  remoteSearched.value = true;
-  try {
-    remoteSkills.value = await invoke<Skill[]>("search_skillsmp", { request: { query: store.query, limit: 20 } });
-  } catch (cause) {
-    remoteError.value = fail(cause);
-  } finally {
-    remoteLoading.value = false;
-  }
-}
 
 onMounted(() => { void store.load(); });
 </script>
@@ -52,8 +23,8 @@ onMounted(() => { void store.load(); });
       </button>
     </div>
 
-    <SearchBar v-model="store.query" :result-count="store.results.length" :loading="store.loading && !store.index" :searching="remoteLoading" @search="searchRemote" />
-    <p v-if="remoteError" class="notice-warning mt-3">{{ remoteError }}</p>
+    <SearchBar v-model="store.query" :result-count="store.results.length" :loading="store.loading && !store.index" :searching="store.remoteLoading" @search="store.searchRemote" />
+    <p v-if="store.remoteError" class="notice-warning mt-3">{{ store.remoteError }}</p>
 
     <div class="mt-5 flex flex-wrap items-center gap-2">
       <span class="mr-1 inline-flex items-center gap-1.5 text-[11px] font-medium text-stone-500"><SlidersHorizontal class="size-3.5" />筛选</span>
@@ -66,6 +37,6 @@ onMounted(() => { void store.load(); });
     <div v-else-if="!store.error && store.results.length === 0" class="surface mt-6 border-dashed px-6 py-10 text-center"><h2 class="text-sm font-semibold text-stone-800">本地索引没有匹配的 skill</h2><p class="mt-2 text-[13px] text-stone-500">可用搜索按钮按需查询 SkillsMP。</p></div>
     <div v-else class="surface mt-6 px-5"><div class="flex items-center justify-between border-b border-stone-100 py-3.5 text-[11px] text-stone-400"><span>{{ store.results.length }} 个本地结果</span><span v-if="store.index?.generatedAt">索引更新于 {{ new Date(store.index.generatedAt).toLocaleString('zh-CN') }}<template v-if="store.index.truncated"> · 当前索引正在扩充</template></span></div><SkillCard v-for="result in store.results" :key="result.skill.id" :result="result" /></div>
 
-    <div v-if="remoteSearched" class="surface mt-6 border-teal-200 px-5"><div class="flex items-center justify-between border-b border-teal-100 py-3.5 text-[11px] font-medium text-teal-800"><span>SkillsMP 远程结果</span><span>{{ remoteResults.length }} 个结果</span></div><p v-if="!remoteResults.length && !remoteLoading && !remoteError" class="py-8 text-center text-[13px] text-stone-500">未找到可解析为 GitHub skill 目录的结果。</p><SkillCard v-for="result in remoteResults" :key="result.skill.id" :result="result" /></div>
+    <div v-if="store.remoteSearched" class="surface mt-6 border-teal-200 px-5"><div class="flex items-center justify-between border-b border-teal-100 py-3.5 text-[11px] font-medium text-teal-800"><span>SkillsMP 远程结果</span><span>{{ store.remoteResults.length }} 个结果</span></div><p v-if="!store.remoteResults.length && !store.remoteLoading && !store.remoteError" class="py-8 text-center text-[13px] text-stone-500">未找到可解析为 GitHub skill 目录的结果。</p><SkillCard v-for="result in store.remoteResults" :key="result.skill.id" :result="result" /></div>
   </section>
 </template>

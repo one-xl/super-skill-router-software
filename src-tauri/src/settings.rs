@@ -261,17 +261,26 @@ pub async fn refine_prompt(app: AppHandle, request: RefineRequest) -> Result<Str
         ApiFormat::Anthropic => suffix(&config.api_url, "/messages"),
     };
     let response = match config.format {
-        ApiFormat::Openai => client.post(endpoint).bearer_auth(&config.api_key).json(&json!({"model": default_model(&config, "gpt-4o-mini"), "messages": [{"role":"system","content":"You produce concise Chinese task prompts in Markdown."},{"role":"user","content":instructions}], "temperature":0.2})).send().await,
-        ApiFormat::Anthropic => client.post(endpoint).header("x-api-key", &config.api_key).header("anthropic-version", "2023-06-01").json(&json!({"model": default_model(&config, "claude-3-5-haiku-latest"), "max_tokens":2000, "messages":[{"role":"user","content":instructions}]})).send().await,
-    }.map_err(|error| format!("无法调用 Prompt API：{error}"))?;
+        ApiFormat::Openai => client.post(&endpoint).bearer_auth(&config.api_key).json(&json!({"model": default_model(&config, "gpt-4o-mini"), "messages": [{"role":"system","content":"You produce concise Chinese task prompts in Markdown."},{"role":"user","content":instructions}], "temperature":0.2})).send().await,
+        ApiFormat::Anthropic => client.post(&endpoint).header("x-api-key", &config.api_key).header("anthropic-version", "2023-06-01").json(&json!({"model": default_model(&config, "claude-3-5-haiku-latest"), "max_tokens":2000, "messages":[{"role":"user","content":instructions}]})).send().await,
+    }.map_err(|error| format!("无法调用 Prompt API（{endpoint}）：{error}"))?;
     let status = response.status();
-    let body: serde_json::Value = response
-        .json()
+    let raw_body = response
+        .text()
         .await
-        .map_err(|error| format!("Prompt API 返回无法解析：{error}"))?;
+        .map_err(|error| format!("无法读取 Prompt API 响应（{endpoint}）：{error}"))?;
     if !status.is_success() {
-        return Err(format!("Prompt API 请求失败（{status}）：{}", body));
+        return Err(format!(
+            "Prompt API 请求失败（{status}，{endpoint}）：{}",
+            response_excerpt(&raw_body)
+        ));
     }
+    let body: serde_json::Value = serde_json::from_str(&raw_body).map_err(|error| {
+        format!(
+            "Prompt API 返回的不是有效 JSON（{status}，{endpoint}）：{error}。响应：{}",
+            response_excerpt(&raw_body)
+        )
+    })?;
     let text = match config.format {
         ApiFormat::Openai => body
             .pointer("/choices/0/message/content")
@@ -282,7 +291,22 @@ pub async fn refine_prompt(app: AppHandle, request: RefineRequest) -> Result<Str
     };
     text.map(str::to_owned)
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Prompt API 没有返回可用文本。".into())
+        .ok_or_else(|| {
+            format!(
+                "Prompt API 没有返回可用文本（{endpoint}）。响应：{}",
+                response_excerpt(&raw_body)
+            )
+        })
+}
+
+fn response_excerpt(value: &str) -> String {
+    const MAX_CHARS: usize = 800;
+    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() <= MAX_CHARS {
+        compact
+    } else {
+        format!("{}…", compact.chars().take(MAX_CHARS).collect::<String>())
+    }
 }
 fn suffix(url: &str, suffix: &str) -> String {
     let url = url.trim_end_matches('/');

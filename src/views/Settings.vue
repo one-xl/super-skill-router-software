@@ -1,20 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { Bot, Check, CircleAlert, CircleCheck, ExternalLink, KeyRound, LoaderCircle, Save, Settings2 } from "@lucide/vue";
-import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { storeToRefs } from "pinia";
 import type { ApiConfig, AppSettings } from "../types/skill";
+import { useSettingsStore } from "../stores/settings";
 
 const SKILLSMP_DOCS_URL = "https://skillsmp.com/zh/docs/api";
-const empty = (): ApiConfig => ({ format: "openai", apiUrl: "", apiKey: "", model: "", apiKeyConfigured: false });
-const settings = ref<AppSettings>({
-  deepScan: empty(),
-  prompt: empty(),
-  skillsMp: { apiKey: "", apiKeyConfigured: false },
-  automation: { autoInjectAfterRefine: false, startCodexRecoveryMonitorOnLaunch: false, recoveryText: "继续并恢复todo-list" },
-});
-const loading = ref(true);
-const saving = ref(false);
+const settingsStore = useSettingsStore();
+const { loading, saving } = storeToRefs(settingsStore);
+const settings = ref<AppSettings>(structuredClone(settingsStore.settings));
 const saved = ref(false);
 const error = ref<string | null>(null);
 const apiSections = [
@@ -32,30 +27,28 @@ const configurationSummary = computed(() => [
   { label: "Prompt 精炼", configured: apiConfigured(settings.value.prompt), suggested: false },
 ]);
 
-async function load() {
-  loading.value = true;
-  try { settings.value = await invoke<AppSettings>("get_settings"); }
-  catch (cause) { error.value = String(cause); }
-  finally { loading.value = false; }
-}
-
 async function save() {
-  saving.value = true;
   error.value = null;
   try {
-    await invoke("save_settings", { settings: settings.value });
-    settings.value = await invoke<AppSettings>("get_settings");
+    await settingsStore.save(settings.value);
+    settings.value = structuredClone(settingsStore.settings);
     saved.value = true;
     window.setTimeout(() => { saved.value = false; }, 1600);
-  } catch (cause) { error.value = String(cause); }
-  finally { saving.value = false; }
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause); }
 }
 
 async function openSkillsMpDocs() {
   await openUrl(SKILLSMP_DOCS_URL);
 }
 
-onMounted(() => { void load(); });
+onMounted(async () => {
+  try {
+    if (!settingsStore.loaded) await settingsStore.load();
+    settings.value = structuredClone(settingsStore.settings);
+  } catch (cause) {
+    error.value = String(cause);
+  }
+});
 </script>
 
 <template>
@@ -138,7 +131,7 @@ onMounted(() => { void load(); });
           <label class="flex cursor-pointer items-start justify-between gap-5 py-4">
             <span>
               <span class="block text-[13px] font-medium text-stone-800">启动软件时监控 ChatGPT Desktop（Codex）重连</span>
-              <span class="mt-1 block text-[11px] leading-5 text-stone-500">仅在 Codex 日志确认第 5 次重连失败后，自动输入并发送“继续并恢复todo-list”。</span>
+              <span class="mt-1 block text-[11px] leading-5 text-stone-500">仅在桌面显示第 5 次重连且任务回到空闲发送键后，自动输入并发送恢复内容；同一对话可重复触发。</span>
             </span>
             <input v-model="settings.automation.startCodexRecoveryMonitorOnLaunch" type="checkbox" class="mt-0.5 size-4 shrink-0 accent-teal-700" />
           </label>

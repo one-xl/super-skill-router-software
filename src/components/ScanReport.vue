@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { CheckCircle2, FolderOpen, LoaderCircle, ScanSearch, ShieldAlert, Sparkles } from "@lucide/vue";
 import type { ScanMode, ScanReport } from "../types/skill";
+import ScanProgress from "./ScanProgress.vue";
 
 const mode = ref<ScanMode>("fast");
 const directory = ref<string | null>(null);
@@ -62,6 +63,7 @@ async function scan() {
     </div>
 
     <p v-if="error" class="mt-4 border-l-4 border-rose-500 bg-rose-50 px-3 py-2 text-sm text-rose-900" role="alert">{{ error }}</p>
+    <ScanProgress :active="loading" :mode="mode" />
 
     <div v-if="report" class="mt-5 border-t border-slate-200 pt-5">
       <div class="flex flex-wrap items-center gap-3">

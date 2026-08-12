@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { recordInstallations } from "../lib/database";
 import { openSkillSource } from "../lib/skill-source";
 import UploadGuide from "./UploadGuide.vue";
+import ScanProgress from "./ScanProgress.vue";
 import type { BatchInstallReport, PreparedInstall, ScanMode, ScanReport, SkillSearchResult, TargetDetection, TargetId } from "../types/skill";
 
 const props = defineProps<{ result: SkillSearchResult }>();
@@ -15,6 +16,7 @@ const error = ref<string | null>(null);
 const prepared = ref<PreparedInstall | null>(null);
 const report = ref<ScanReport | null>(null);
 const scanning = ref(false);
+const scanningMode = ref<ScanMode>("fast");
 const scanSkipped = ref(false);
 const targets = ref<TargetDetection[]>([]);
 const selectedTargets = ref<TargetId[]>([]);
@@ -57,6 +59,7 @@ async function prepareInstall() {
 async function scan(mode: ScanMode | "skip") {
   if (!prepared.value || scanning.value) return;
   if (mode === "skip") { scanSkipped.value = true; return; }
+  scanningMode.value = mode;
   scanning.value = true; error.value = null;
   try { report.value = await invoke<ScanReport>("scan_prepared_skill", { token: prepared.value.token, mode }); }
   catch (cause) { error.value = failureMessage(cause); } finally { scanning.value = false; }
@@ -127,6 +130,7 @@ async function installSelectedTargets() {
     <div v-else-if="prepared && !report && !scanSkipped" class="surface-muted mt-4 p-4">
       <div class="flex items-center gap-2 text-[13px] font-semibold text-stone-900"><ShieldAlert class="size-4 text-teal-700" />下载完成，选择安装前扫描方式</div>
       <div class="mt-3 flex flex-wrap gap-2"><button type="button" class="button-secondary" :disabled="scanning" @click="scan('skip')">跳过扫描</button><button type="button" class="button-primary" :disabled="scanning" @click="scan('fast')"><LoaderCircle v-if="scanning" class="size-4 animate-spin" />快速扫描</button><button type="button" class="button-secondary" :disabled="scanning" @click="scan('deep')"><Sparkles class="size-4" />深度扫描</button></div>
+      <ScanProgress :active="scanning" :mode="scanningMode" />
       <p class="mt-2 text-[11px] text-stone-500">深度扫描使用设置页中的模型配置；扫描只作决策提示，仍由你决定是否部署。</p>
     </div>
     <div v-else-if="prepared" class="surface-muted mt-4 p-4">

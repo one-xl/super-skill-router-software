@@ -81,7 +81,7 @@ onUnmounted(() => { unlisten?.(); });
       <div class="flex flex-wrap items-center justify-between gap-4 border-b border-stone-200 px-5 py-4">
         <div class="flex items-center gap-3">
           <span class="flex size-10 items-center justify-center rounded-md bg-stone-100 text-stone-700"><MonitorCog class="size-5" /></span>
-          <div><h2 class="section-title">ChatGPT Desktop（Codex）</h2><p class="mt-1 text-[11px] text-stone-500">不启动 CLI，直接观察桌面应用自身日志。</p></div>
+          <div><h2 class="section-title">ChatGPT Desktop（Codex）</h2><p class="mt-1 text-[11px] text-stone-500">不启动 CLI，直接观察桌面应用的重连、运行与空闲按钮状态。</p></div>
         </div>
         <span v-if="status" class="inline-flex items-center gap-1.5 text-[12px] font-medium" :class="stateClass(status.state)"><CheckCircle2 v-if="status.state === 'watching'" class="size-4" /><AlertCircle v-else class="size-4" />{{ stateLabel(status.state) }}</span>
         <span v-else class="text-[12px] text-stone-400">未运行</span>
@@ -95,7 +95,7 @@ onUnmounted(() => { unlisten?.(); });
 
       <div v-if="status?.last_error" class="notice-error m-5">{{ status.last_error }}</div>
       <div class="border-t border-stone-200 bg-stone-50 px-5 py-3 text-[11px] text-stone-500">
-        <p>以 ChatGPT Desktop 对话框显示的“正在重新连接 x/5”为准；AppServer 日志仅用于兼容诊断。</p>
+        <p>达到“正在重新连接 5/5”后，等待任务从“停止”回到灰色“发送”键再发送；新任务开始后自动进入下一轮监控。</p>
         <p v-if="status?.log_path" class="mt-1 truncate" :title="status.log_path">日志：{{ status.log_path }}</p>
       </div>
     </section>

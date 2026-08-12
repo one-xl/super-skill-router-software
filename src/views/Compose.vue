@@ -4,9 +4,12 @@ import { Check, Clipboard, Download, LoaderCircle, LogIn, Plus, ShieldAlert, Spa
 import { invoke } from "@tauri-apps/api/core";
 import { loadInstalledRecords, recordInstallations } from "../lib/database";
 import { useSkillIndexStore } from "../stores";
-import type { AppSettings, BatchInstallReport, ConversionResult, ConverterSkill, PreparedInstall, ScanReport, Skill, TargetDetection, TargetId } from "../types/skill";
+import type { BatchInstallReport, ConversionResult, ConverterSkill, PreparedInstall, ScanReport, Skill, TargetDetection, TargetId } from "../types/skill";
+import { useSettingsStore } from "../stores/settings";
+import ScanProgress from "../components/ScanProgress.vue";
 
 const store = useSkillIndexStore();
+const settingsStore = useSettingsStore();
 const requirement = ref("");
 const installed = ref<Skill[]>([]);
 const conversion = ref<ConversionResult | null>(null);
@@ -15,7 +18,7 @@ const error = ref<string | null>(null);
 const copied = ref(false);
 const injecting = ref(false);
 const injectTarget = ref("codex_desktop");
-const autoInjectAfterRefine = ref(false);
+const autoInjectAfterRefine = computed(() => settingsStore.autoInjectAfterRefine);
 const refining = ref(false);
 const manualSelectedIds = ref<string[] | null>(null);
 const addSkillId = ref("");
@@ -25,6 +28,7 @@ const gapPrepared = ref<{ skill: Skill; prepared: PreparedInstall; targets: Targ
 const gapReport = ref<ScanReport | null>(null);
 const gapSkipped = ref(false);
 const gapScanning = ref(false);
+const gapScanningMode = ref<"fast" | "deep">("fast");
 
 function toMetadata(skill: Skill): ConverterSkill {
   return { id: skill.id, name: skill.name, description: skill.description, whenToUse: skill.whenToUse, tags: skill.tags, frecency: 0 };
@@ -124,6 +128,14 @@ async function injectToAgent() {
   try { await injectPrompt(conversion.value.prompt); } catch { /* Error is displayed above. */ }
 }
 
+async function updateAutoInject(value: boolean) {
+  try {
+    await settingsStore.setAutoInjectAfterRefine(value);
+  } catch (cause) {
+    error.value = `无法保存自动填入设置：${fail(cause)}`;
+  }
+}
+
 async function refinePrompt() {
   if (!conversion.value || refining.value || injecting.value) return;
   refining.value = true; error.value = null;
@@ -158,7 +170,8 @@ async function prepareGapInstall(skillId: string) {
 
 async function scanGap(mode: "fast" | "deep" | "skip") {
   if (!gapPrepared.value || gapScanning.value) return;
-  if (mode === "skip") { gapSkipped.value = true; return; }
+  if (mode === "skip") { gapSkipped.value = true; gapReport.value = null; return; }
+  gapScanningMode.value = mode;
   gapScanning.value = true; error.value = null;
   try { gapReport.value = await invoke<ScanReport>("scan_prepared_skill", { token: gapPrepared.value.prepared.token, mode }); }
   catch (cause) { error.value = fail(cause); } finally { gapScanning.value = false; }
@@ -186,12 +199,7 @@ async function installGap() {
 }
 
 onMounted(async () => {
-  try {
-    const settings = await invoke<AppSettings>("get_settings");
-    autoInjectAfterRefine.value = settings.automation.autoInjectAfterRefine;
-  } catch (cause) {
-    error.value = `无法读取自动化设置：${fail(cause)}`;
-  }
+  if (!settingsStore.loaded) { try { await settingsStore.load(); } catch (cause) { error.value = `无法读取自动化设置：${fail(cause)}`; } }
   if (!store.index) await store.load();
   try { await refreshInstalled(); } catch (cause) { error.value = `无法读取本机安装记录：${fail(cause)}`; }
 });
@@ -241,6 +249,7 @@ onMounted(async () => {
           <div v-if="gapPrepared" class="notice-warning mt-5">
             <div class="flex items-center gap-2 font-semibold"><ShieldAlert class="size-4" />{{ gapReport ? `扫描完成：${gapReport.risk_assessment.score}/100 · ${gapReport.risk_assessment.recommendation.replace(/_/g, ' ')}` : gapSkipped ? '已跳过扫描' : '选择安装前扫描方式' }}</div>
             <div v-if="!gapReport && !gapSkipped" class="mt-3 flex flex-wrap gap-2"><button type="button" class="button-ghost border border-amber-300 bg-white" :disabled="gapScanning" @click="scanGap('skip')">跳过扫描</button><button type="button" class="button-primary" :disabled="gapScanning" @click="scanGap('fast')"><LoaderCircle v-if="gapScanning" class="size-4 animate-spin" />快速扫描</button><button type="button" class="button-secondary border-amber-300" :disabled="gapScanning" @click="scanGap('deep')"><Sparkles class="size-4" />深度扫描</button></div>
+            <ScanProgress v-if="!gapReport && !gapSkipped" :active="gapScanning" :mode="gapScanningMode" />
             <div v-else class="mt-3 flex flex-wrap items-center gap-2"><select v-model="gapPrepared.target" class="select-field h-9 min-w-44 flex-1"><option v-for="target in gapPrepared.targets.filter((target) => target.id !== 'claude_desktop' && target.available)" :key="target.id" :value="target.id">{{ target.name }}</option></select><button type="button" class="button-primary" :disabled="gapInstalling" @click="installGap"><LoaderCircle v-if="gapInstalling" class="size-4 animate-spin" />{{ gapInstalling ? '正在安装' : '安装并更新 Prompt' }}</button></div>
             <p class="mt-2 text-[11px]">扫描仅辅助判断，是否继续安装由你决定。</p>
           </div>
@@ -262,7 +271,7 @@ onMounted(async () => {
                 <LoaderCircle v-if="injecting" class="size-4 animate-spin" /><LogIn v-else class="size-4" />填入
               </button>
             </div>
-            <label class="inline-flex h-8 items-center gap-1.5 text-[10px] text-stone-500"><input v-model="autoInjectAfterRefine" type="checkbox" />精炼后自动填入</label>
+            <label class="inline-flex h-8 items-center gap-1.5 text-[10px] text-stone-500"><input :checked="autoInjectAfterRefine" type="checkbox" @change="updateAutoInject(($event.target as HTMLInputElement).checked)" />精炼后自动填入</label>
           </div>
         </div>
         <pre class="min-h-[34rem] whitespace-pre-wrap bg-stone-950 p-5 font-mono text-[12px] leading-6 text-stone-200">{{ loading ? '正在匹配已安装 skill...' : conversion?.prompt || '输入需求后将在此生成结构化 prompt。' }}</pre>

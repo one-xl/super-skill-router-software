@@ -11,6 +11,14 @@ const DESKTOP_TARGETS: &[(&str, &[&str])] = &[
     ("claude_code_desktop", &["claude.exe"]),
 ];
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CodexDesktopActivity {
+    Reconnecting(u32),
+    Running,
+    Idle,
+    Unknown,
+}
+
 fn target_executables(target_id: &str) -> Option<&'static [&'static str]> {
     DESKTOP_TARGETS
         .iter()
@@ -19,7 +27,7 @@ fn target_executables(target_id: &str) -> Option<&'static [&'static str]> {
 
 #[cfg(target_os = "windows")]
 mod win {
-    use super::target_executables;
+    use super::{target_executables, CodexDesktopActivity};
     use std::collections::HashSet;
     use std::thread;
     use std::time::Duration;
@@ -161,7 +169,7 @@ mod win {
             .filter(|attempt| *attempt > 0)
     }
 
-    pub fn codex_visible_reconnect_attempt() -> Result<Option<u32>, String> {
+    pub fn codex_desktop_activity() -> Result<CodexDesktopActivity, String> {
         let executables = target_executables("codex_desktop")
             .ok_or_else(|| "Codex Desktop 目标未配置。".to_string())?;
         let hwnd = visible_window(executables)?;
@@ -182,12 +190,41 @@ mod win {
             .find_all()
             .unwrap_or_default();
 
-        Ok(candidates.into_iter().find_map(|element| {
-            element
-                .get_name()
-                .ok()
-                .and_then(|text| reconnect_attempt_from_text(&text))
-        }))
+        let names = candidates
+            .into_iter()
+            .filter_map(|element| element.get_name().ok())
+            .collect::<Vec<_>>();
+        if let Some(attempt) = names
+            .iter()
+            .find_map(|text| reconnect_attempt_from_text(text))
+        {
+            return Ok(CodexDesktopActivity::Reconnecting(attempt));
+        }
+        if names.iter().any(|name| is_stop_button(name)) {
+            return Ok(CodexDesktopActivity::Running);
+        }
+        if names.iter().any(|name| is_send_button(name)) {
+            return Ok(CodexDesktopActivity::Idle);
+        }
+        Ok(CodexDesktopActivity::Unknown)
+    }
+
+    fn normalized_button_name(name: &str) -> String {
+        name.trim().to_ascii_lowercase()
+    }
+
+    pub(super) fn is_stop_button(name: &str) -> bool {
+        matches!(
+            normalized_button_name(name).as_str(),
+            "停止" | "停止生成" | "stop" | "stop generating"
+        )
+    }
+
+    pub(super) fn is_send_button(name: &str) -> bool {
+        matches!(
+            normalized_button_name(name).as_str(),
+            "发送" | "send" | "发送消息" | "send message"
+        )
     }
 
     pub fn send_to_desktop(executables: &[&str], text: &str, submit: bool) -> Result<(), String> {
@@ -238,10 +275,10 @@ pub fn send_text_to_desktop(target_id: &str, text: &str, submit: bool) -> Result
     }
 }
 
-pub fn codex_visible_reconnect_attempt() -> Result<Option<u32>, String> {
+pub fn codex_desktop_activity() -> Result<CodexDesktopActivity, String> {
     #[cfg(target_os = "windows")]
     {
-        win::codex_visible_reconnect_attempt()
+        win::codex_desktop_activity()
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -297,5 +334,15 @@ mod tests {
             super::win::reconnect_attempt_from_text("正在重新连接"),
             None
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn recognizes_desktop_run_and_idle_buttons() {
+        assert!(super::win::is_stop_button("停止"));
+        assert!(super::win::is_stop_button("Stop generating"));
+        assert!(super::win::is_send_button("发送"));
+        assert!(super::win::is_send_button("Send message"));
+        assert!(!super::win::is_send_button("跳转到用户消息 2"));
     }
 }
