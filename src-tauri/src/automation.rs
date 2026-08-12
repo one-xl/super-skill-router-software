@@ -215,6 +215,27 @@ mod win {
         }) else {
             return None;
         };
+        let error_icons = automation
+            .create_matcher()
+            .from_ref(root)
+            .control_type(ControlType::Image)
+            .depth(32)
+            .timeout(0)
+            .find_all()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|element| {
+                let class_name = element.get_classname().ok()?.to_ascii_lowercase();
+                let name = element.get_name().unwrap_or_default().to_ascii_lowercase();
+                if !class_name.contains("error")
+                    && !name.contains("error")
+                    && !name.contains("错误")
+                {
+                    return None;
+                }
+                element.get_bounding_rectangle().ok()
+            })
+            .collect::<Vec<_>>();
         let candidates = automation
             .create_matcher()
             .from_ref(root)
@@ -228,84 +249,29 @@ mod win {
             let Ok(name) = element.get_name() else {
                 return None;
             };
-            if !is_terminal_failure_text(&name) {
-                return None;
-            }
             let Ok(rect) = element.get_bounding_rectangle() else {
                 return None;
             };
             let vertical_gap = composer_rect.get_top() - rect.get_bottom();
             let center_x = (rect.get_left() + rect.get_right()) / 2;
-            ((0..=180).contains(&vertical_gap)
+            let in_status_area = (0..=96).contains(&vertical_gap)
                 && center_x >= composer_rect.get_left()
-                && center_x <= composer_rect.get_right())
-            .then(|| normalize_failure_text(&name))
+                && center_x <= composer_rect.get_right();
+            let has_error_icon = error_icons.iter().any(|icon| {
+                let vertical_overlap = icon.get_top() <= rect.get_bottom() + 8
+                    && icon.get_bottom() >= rect.get_top() - 8;
+                let horizontal_gap = if icon.get_right() <= rect.get_left() {
+                    rect.get_left() - icon.get_right()
+                } else if rect.get_right() <= icon.get_left() {
+                    icon.get_left() - rect.get_right()
+                } else {
+                    0
+                };
+                vertical_overlap && horizontal_gap <= 48
+            });
+            (in_status_area && has_error_icon && !name.trim().is_empty())
+                .then(|| normalize_failure_text(&name))
         })
-    }
-
-    pub(super) fn is_terminal_failure_text(text: &str) -> bool {
-        const MARKERS: &[&str] = &[
-            "error",
-            "something went wrong",
-            "problem occurred",
-            "failed",
-            "failure",
-            "unexpected status",
-            "service unavailable",
-            "unavailable",
-            "timeout",
-            "timed out",
-            "connection reset",
-            "connection closed",
-            "connection lost",
-            "disconnected",
-            "network failure",
-            "network error",
-            "cancelled",
-            "canceled",
-            "aborted",
-            "terminated",
-            "denied",
-            "forbidden",
-            "unauthorized",
-            "exceeded retry limit",
-            "too many requests",
-            "rate limit exceeded",
-            "retry limit exceeded",
-            "错误",
-            "出错",
-            "异常",
-            "失败",
-            "不可用",
-            "超时",
-            "连接中断",
-            "连接断开",
-            "网络中断",
-            "网络错误",
-            "已取消",
-            "被取消",
-            "已终止",
-            "被终止",
-            "拒绝",
-            "禁止",
-            "未授权",
-            "已超过重试次数",
-            "超过重试限制",
-            "请求过多",
-        ];
-        let lower = text.trim().to_ascii_lowercase();
-        reconnect_attempt_from_text(&lower).is_none()
-            && (MARKERS.iter().any(|marker| lower.contains(marker))
-                || contains_http_error_status(&lower))
-    }
-
-    fn contains_http_error_status(text: &str) -> bool {
-        text.split(|character: char| !character.is_ascii_alphanumeric())
-            .any(|token| {
-                token.len() == 3
-                    && matches!(token.as_bytes().first(), Some(b'4' | b'5'))
-                    && token.bytes().all(|byte| byte.is_ascii_digit())
-            })
     }
 
     fn normalize_failure_text(text: &str) -> String {
@@ -450,31 +416,5 @@ mod tests {
         assert!(super::win::is_send_button("发送"));
         assert!(super::win::is_send_button("Send message"));
         assert!(!super::win::is_send_button("跳转到用户消息 2"));
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn recognizes_terminal_failures() {
-        assert!(super::win::is_terminal_failure_text(
-            "exceeded retry limit, last status: 429 Too Many Requests"
-        ));
-        assert!(super::win::is_terminal_failure_text(
-            "unexpected status 503 Service Unavailable: Service temporarily unavailable"
-        ));
-        assert!(super::win::is_terminal_failure_text(
-            "Request failed with status 401"
-        ));
-        assert!(super::win::is_terminal_failure_text(
-            "Something went wrong while processing your request"
-        ));
-        assert!(super::win::is_terminal_failure_text(
-            "connection reset by peer"
-        ));
-        assert!(super::win::is_terminal_failure_text(
-            "请求过多，已超过重试次数"
-        ));
-        assert!(super::win::is_terminal_failure_text("服务暂时不可用"));
-        assert!(!super::win::is_terminal_failure_text("正在重新连接 3/5"));
-        assert!(!super::win::is_terminal_failure_text("任务已完成"));
     }
 }

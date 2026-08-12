@@ -53,12 +53,9 @@ pub struct DesktopMonitorSupervisor {
 #[derive(Default, Debug)]
 struct ReconnectTracker {
     attempt: u32,
-    fired_for_attempt_five: bool,
-    pending_recovery: bool,
     awaiting_recovery_turn: bool,
     recovery_turn_deadline: Option<Instant>,
     running_seen: bool,
-    terminal_failure_baseline: Option<String>,
     terminal_failure_observed: bool,
     terminal_failure_handled: bool,
 }
@@ -88,31 +85,24 @@ impl ReconnectTracker {
                     self.rearm_for_next_turn();
                 }
                 self.attempt = attempt;
-                self.running_seen = true;
-                if attempt >= MAX_FAILURES && !self.fired_for_attempt_five {
-                    self.fired_for_attempt_five = true;
-                    self.pending_recovery = true;
-                }
                 (ReconnectEvent::Attempt(attempt), false)
             }
             ReconnectEvent::Connected => {
-                if !self.pending_recovery && !self.awaiting_recovery_turn {
+                if !self.awaiting_recovery_turn {
                     self.rearm_for_next_turn();
                 }
                 (ReconnectEvent::Connected, false)
             }
             ReconnectEvent::NewTurn => {
-                if self.pending_recovery
-                    || self
-                        .recovery_turn_deadline
-                        .is_some_and(|deadline| now <= deadline)
+                if self
+                    .recovery_turn_deadline
+                    .is_some_and(|deadline| now <= deadline)
                 {
                     self.recovery_turn_deadline = None;
                     (ReconnectEvent::Ignore, false)
                 } else {
                     self.recovery_turn_deadline = None;
                     self.rearm_for_next_turn();
-                    self.running_seen = true;
                     (ReconnectEvent::NewTurn, false)
                 }
             }
@@ -121,7 +111,6 @@ impl ReconnectTracker {
     }
 
     fn mark_recovery_sent(&mut self) {
-        self.pending_recovery = false;
         self.awaiting_recovery_turn = true;
         self.recovery_turn_deadline = Some(Instant::now() + Duration::from_secs(5));
     }
@@ -136,37 +125,22 @@ impl ReconnectTracker {
             if self.awaiting_recovery_turn {
                 self.rearm_for_next_turn();
             }
-            if !self.running_seen {
-                // An error already visible when monitoring first sees a running
-                // turn is treated as the baseline, not as a new failure.
-                self.terminal_failure_baseline = snapshot.terminal_failure.clone();
-            }
             self.running_seen = true;
-            if snapshot.terminal_failure.is_none() {
-                // The previous turn's banner can remain briefly after submit.
-                // Once it disappears, identical text appearing again is new.
-                self.terminal_failure_baseline = None;
-            }
             if event == ReconnectEvent::Ignore {
                 event = ReconnectEvent::NewTurn;
             }
         }
 
-        if self.running_seen
-            && snapshot.terminal_failure.is_some()
-            && snapshot.terminal_failure != self.terminal_failure_baseline
-        {
+        if self.running_seen && snapshot.terminal_failure.is_some() {
             self.terminal_failure_observed = true;
         }
 
         let should_recover = snapshot.idle
-            && snapshot.terminal_failure.is_some()
             && self.running_seen
             && self.terminal_failure_observed
             && !self.terminal_failure_handled
             && !self.awaiting_recovery_turn;
         if should_recover {
-            self.pending_recovery = false;
             self.terminal_failure_handled = true;
         }
         if snapshot.idle && event == ReconnectEvent::Ignore {
@@ -177,12 +151,9 @@ impl ReconnectTracker {
 
     fn rearm_for_next_turn(&mut self) {
         self.attempt = 0;
-        self.fired_for_attempt_five = false;
-        self.pending_recovery = false;
         self.awaiting_recovery_turn = false;
         self.recovery_turn_deadline = None;
         self.running_seen = false;
-        self.terminal_failure_baseline = None;
         self.terminal_failure_observed = false;
         self.terminal_failure_handled = false;
     }
@@ -354,7 +325,6 @@ async fn tail_codex_log(
         let mut tracker = ReconnectTracker::default();
         let mut line = String::new();
         let mut rotation_ticks = 0_u8;
-        let mut ui_poll_ticks = 0_u8;
 
         loop {
             tokio::select! {
@@ -379,28 +349,24 @@ async fn tail_codex_log(
                             }).await;
                         }
                     }
-                    ui_poll_ticks = ui_poll_ticks.saturating_add(1);
-                    if ui_poll_ticks >= 3 {
-                        ui_poll_ticks = 0;
-                        let desktop_activity = tauri::async_runtime::spawn_blocking(
-                            automation::codex_desktop_snapshot,
-                        )
-                        .await
-                        .map_err(|error| format!("读取 ChatGPT Desktop 重连状态失败：{error}"))?;
-                        match desktop_activity {
-                            Ok(activity) => {
-                                let (event, should_recover) = tracker.observe_snapshot(activity);
-                                apply_reconnect_event(&app, &monitors, &target_id, event).await;
-                                if should_recover
-                                    && send_recovery(&app, &monitors, &target_id, &recovery_text)
-                                        .await?
-                                {
-                                    tracker.mark_recovery_sent();
-                                }
+                    let desktop_activity = tauri::async_runtime::spawn_blocking(
+                        automation::codex_desktop_snapshot,
+                    )
+                    .await
+                    .map_err(|error| format!("读取 ChatGPT Desktop 重连状态失败：{error}"))?;
+                    match desktop_activity {
+                        Ok(activity) => {
+                            let (event, should_recover) = tracker.observe_snapshot(activity);
+                            apply_reconnect_event(&app, &monitors, &target_id, event).await;
+                            if should_recover
+                                && send_recovery(&app, &monitors, &target_id, &recovery_text)
+                                    .await?
+                            {
+                                tracker.mark_recovery_sent();
                             }
-                            Err(_) => {
-                                // ChatGPT Desktop may be minimized or closing. The log monitor remains active.
-                            }
+                        }
+                        Err(_) => {
+                            // ChatGPT Desktop may be minimized or closing. The log monitor remains active.
                         }
                     }
                     loop {
@@ -548,15 +514,6 @@ mod tests {
         }
     }
 
-    fn reconnecting_idle(attempt: u32, error: &str) -> CodexDesktopSnapshot {
-        CodexDesktopSnapshot {
-            reconnect_attempt: Some(attempt),
-            idle: true,
-            terminal_failure: Some(error.to_string()),
-            ..Default::default()
-        }
-    }
-
     #[test]
     fn ignores_unrelated_retry_text() {
         assert_eq!(
@@ -576,22 +533,16 @@ mod tests {
     }
 
     #[test]
-    fn screenshot_state_with_attempt_five_error_and_idle_recovers() {
+    fn attempt_five_and_error_without_a_seen_stop_button_does_not_recover() {
         let mut tracker = ReconnectTracker::default();
         assert!(
-            tracker
-                .observe_snapshot(reconnecting_idle(
-                    5,
-                    "unexpected status 503 service unavailable"
-                ))
-                .1
-        );
-        assert!(
             !tracker
-                .observe_snapshot(reconnecting_idle(
-                    5,
-                    "unexpected status 503 service unavailable"
-                ))
+                .observe_snapshot(CodexDesktopSnapshot {
+                    reconnect_attempt: Some(5),
+                    idle: true,
+                    terminal_failure: Some("unexpected status 503 service unavailable".to_string()),
+                    ..Default::default()
+                })
                 .1
         );
     }
@@ -608,11 +559,11 @@ mod tests {
     }
 
     #[test]
-    fn turn_start_log_covers_a_failure_too_fast_for_running_ui_poll() {
+    fn turn_start_log_cannot_replace_the_stop_button_transition() {
         let mut tracker = ReconnectTracker::default();
         tracker.observe_event(ReconnectEvent::NewTurn);
         assert!(
-            tracker
+            !tracker
                 .observe_snapshot(idle(Some("connection reset by peer error")))
                 .1
         );
@@ -642,13 +593,8 @@ mod tests {
     }
 
     #[test]
-    fn historical_error_is_only_a_baseline() {
+    fn historical_error_visible_only_after_monitor_start_does_not_recover() {
         let mut tracker = ReconnectTracker::default();
-        assert!(
-            !tracker
-                .observe_snapshot(running(Some("old request failed")))
-                .1
-        );
         assert!(!tracker.observe_snapshot(idle(Some("old request failed"))).1);
     }
 
