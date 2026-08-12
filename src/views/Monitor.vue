@@ -93,6 +93,12 @@ onUnmounted(() => { unlisten?.(); });
         <div class="p-5"><p class="text-[10px] font-semibold uppercase tracking-wide text-stone-400">自动发送内容</p><code class="mt-2 block break-words text-[12px] text-stone-800">{{ status?.recovery_text || '继续并恢复todo-list' }}</code></div>
       </div>
 
+      <div class="grid gap-px border-t border-stone-200 bg-stone-200 sm:grid-cols-3">
+        <div class="bg-white px-5 py-3 text-[11px]"><span :class="status?.running_seen ? 'text-emerald-700' : 'text-stone-400'">{{ status?.running_seen ? '已看到停止按钮' : '等待停止按钮' }}</span></div>
+        <div class="bg-white px-5 py-3 text-[11px]"><span :class="status?.failure_seen ? 'text-rose-700' : 'text-stone-400'">{{ status?.failure_seen ? '已捕获本轮新错误' : '等待本轮新错误' }}</span></div>
+        <div class="bg-white px-5 py-3 text-[11px]"><span :class="status?.send_button_visible ? 'text-emerald-700' : 'text-stone-400'">{{ status?.send_button_visible ? '发送箭头已出现' : '等待发送箭头' }}</span></div>
+      </div>
+
       <div v-if="status?.last_error" class="notice-error m-5">{{ status.last_error }}</div>
       <div class="border-t border-stone-200 bg-stone-50 px-5 py-3 text-[11px] text-stone-500">
         <p>支持重连耗尽、HTTP 错误、服务不可用、超时、拒绝等错误；仅处理本轮新出现且导致任务终止的错误，正常完成和历史消息不会触发。</p>

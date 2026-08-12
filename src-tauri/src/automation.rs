@@ -16,7 +16,7 @@ pub struct CodexDesktopSnapshot {
     pub reconnect_attempt: Option<u32>,
     pub running: bool,
     pub idle: bool,
-    pub terminal_failure: Option<String>,
+    pub failure_banners: Vec<String>,
 }
 
 fn target_executables(target_id: &str) -> Option<&'static [&'static str]> {
@@ -200,85 +200,51 @@ mod win {
                 .find_map(|text| reconnect_attempt_from_text(text)),
             running: names.iter().any(|name| is_stop_button(name)),
             idle: names.iter().any(|name| is_send_button(name)),
-            terminal_failure: terminal_failure_near_composer(&automation, &root),
+            failure_banners: failure_banner_ids(&automation, &root),
         })
     }
 
-    fn terminal_failure_near_composer(
-        automation: &UIAutomation,
-        root: &UIElement,
-    ) -> Option<String> {
-        let Ok(composer_rect) = composer(root).and_then(|element| {
-            element
-                .get_bounding_rectangle()
-                .map_err(|error| format!("无法读取输入框位置：{error}"))
-        }) else {
-            return None;
-        };
-        let error_icons = automation
+    fn failure_banner_ids(automation: &UIAutomation, root: &UIElement) -> Vec<String> {
+        automation
             .create_matcher()
             .from_ref(root)
-            .control_type(ControlType::Image)
+            .control_type(ControlType::Group)
+            .filter_fn(Box::new(|element: &UIElement| {
+                let class_name = element.get_classname()?;
+                Ok(is_failure_banner_class(&class_name))
+            }))
             .depth(32)
             .timeout(0)
             .find_all()
             .unwrap_or_default()
             .into_iter()
             .filter_map(|element| {
-                let class_name = element.get_classname().ok()?.to_ascii_lowercase();
-                let name = element.get_name().unwrap_or_default().to_ascii_lowercase();
-                if !class_name.contains("error")
-                    && !name.contains("error")
-                    && !name.contains("错误")
-                {
-                    return None;
-                }
-                element.get_bounding_rectangle().ok()
+                let runtime_id = element.get_runtime_id().ok()?;
+                (!runtime_id.is_empty()).then(|| {
+                    runtime_id
+                        .iter()
+                        .map(i32::to_string)
+                        .collect::<Vec<_>>()
+                        .join(":")
+                })
             })
-            .collect::<Vec<_>>();
-        let candidates = automation
-            .create_matcher()
-            .from_ref(root)
-            .control_type(ControlType::Text)
-            .depth(32)
-            .timeout(0)
-            .find_all()
-            .unwrap_or_default();
-
-        candidates.into_iter().find_map(|element| {
-            let Ok(name) = element.get_name() else {
-                return None;
-            };
-            let Ok(rect) = element.get_bounding_rectangle() else {
-                return None;
-            };
-            let vertical_gap = composer_rect.get_top() - rect.get_bottom();
-            let center_x = (rect.get_left() + rect.get_right()) / 2;
-            let in_status_area = (0..=96).contains(&vertical_gap)
-                && center_x >= composer_rect.get_left()
-                && center_x <= composer_rect.get_right();
-            let has_error_icon = error_icons.iter().any(|icon| {
-                let vertical_overlap = icon.get_top() <= rect.get_bottom() + 8
-                    && icon.get_bottom() >= rect.get_top() - 8;
-                let horizontal_gap = if icon.get_right() <= rect.get_left() {
-                    rect.get_left() - icon.get_right()
-                } else if rect.get_right() <= icon.get_left() {
-                    icon.get_left() - rect.get_right()
-                } else {
-                    0
-                };
-                vertical_overlap && horizontal_gap <= 48
-            });
-            (in_status_area && has_error_icon && !name.trim().is_empty())
-                .then(|| normalize_failure_text(&name))
-        })
+            .collect()
     }
 
-    fn normalize_failure_text(text: &str) -> String {
-        text.split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .to_ascii_lowercase()
+    pub(super) fn is_failure_banner_class(class_name: &str) -> bool {
+        let classes = class_name.split_whitespace().collect::<HashSet<_>>();
+        [
+            "relative",
+            "isolate",
+            "w-full",
+            "overflow-hidden",
+            "rounded-2xl",
+            "border",
+            "bg-token-main-surface-primary",
+            "gap-3",
+        ]
+        .iter()
+        .all(|required| classes.contains(required))
     }
 
     fn normalized_button_name(name: &str) -> String {
@@ -416,5 +382,16 @@ mod tests {
         assert!(super::win::is_send_button("发送"));
         assert!(super::win::is_send_button("Send message"));
         assert!(!super::win::is_send_button("跳转到用户消息 2"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn recognizes_the_desktop_failure_banner_container() {
+        assert!(super::win::is_failure_banner_class(
+            "relative isolate flex w-full overflow-hidden rounded-2xl border bg-token-main-surface-primary py-2 pl-3 pr-2 text-sm shadow-xs gap-3"
+        ));
+        assert!(!super::win::is_failure_banner_class(
+            "thread-scroll-container relative h-full overflow-hidden"
+        ));
     }
 }

@@ -169,4 +169,7 @@ export interface DesktopMonitorStatus {
   recovery_text: string;
   last_error: string | null;
   log_path: string | null;
+  running_seen: boolean;
+  failure_seen: boolean;
+  send_button_visible: boolean;
 }

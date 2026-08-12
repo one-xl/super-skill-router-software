@@ -5,6 +5,7 @@
 //! delayed log lines never trigger recovery. The monitor never starts a CLI.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -38,6 +39,9 @@ pub struct DesktopMonitorStatus {
     pub recovery_text: String,
     pub last_error: Option<String>,
     pub log_path: Option<String>,
+    pub running_seen: bool,
+    pub failure_seen: bool,
+    pub send_button_visible: bool,
 }
 
 struct MonitorEntry {
@@ -56,6 +60,7 @@ struct ReconnectTracker {
     awaiting_recovery_turn: bool,
     recovery_turn_deadline: Option<Instant>,
     running_seen: bool,
+    failure_banner_baseline: HashSet<String>,
     terminal_failure_observed: bool,
     terminal_failure_handled: bool,
 }
@@ -125,13 +130,21 @@ impl ReconnectTracker {
             if self.awaiting_recovery_turn {
                 self.rearm_for_next_turn();
             }
+            if !self.running_seen {
+                self.failure_banner_baseline = snapshot.failure_banners.iter().cloned().collect();
+            }
             self.running_seen = true;
             if event == ReconnectEvent::Ignore {
                 event = ReconnectEvent::NewTurn;
             }
         }
 
-        if self.running_seen && snapshot.terminal_failure.is_some() {
+        if self.running_seen
+            && snapshot
+                .failure_banners
+                .iter()
+                .any(|id| !self.failure_banner_baseline.contains(id))
+        {
             self.terminal_failure_observed = true;
         }
 
@@ -154,6 +167,7 @@ impl ReconnectTracker {
         self.awaiting_recovery_turn = false;
         self.recovery_turn_deadline = None;
         self.running_seen = false;
+        self.failure_banner_baseline.clear();
         self.terminal_failure_observed = false;
         self.terminal_failure_handled = false;
     }
@@ -244,6 +258,9 @@ impl DesktopMonitorSupervisor {
             recovery_text: recovery_text.clone(),
             last_error: None,
             log_path: Some(log_path.display().to_string()),
+            running_seen: false,
+            failure_seen: false,
+            send_button_visible: false,
         };
         monitors.insert(
             target_id.clone(),
@@ -356,7 +373,13 @@ async fn tail_codex_log(
                     .map_err(|error| format!("读取 ChatGPT Desktop 重连状态失败：{error}"))?;
                     match desktop_activity {
                         Ok(activity) => {
+                            let send_button_visible = activity.idle;
                             let (event, should_recover) = tracker.observe_snapshot(activity);
+                            update_status(&app, &monitors, &target_id, |status| {
+                                status.running_seen = tracker.running_seen;
+                                status.failure_seen = tracker.terminal_failure_observed;
+                                status.send_button_visible = send_button_visible;
+                            }).await;
                             apply_reconnect_event(&app, &monitors, &target_id, event).await;
                             if should_recover
                                 && send_recovery(&app, &monitors, &target_id, &recovery_text)
@@ -501,7 +524,7 @@ mod tests {
     fn running(error: Option<&str>) -> CodexDesktopSnapshot {
         CodexDesktopSnapshot {
             running: true,
-            terminal_failure: error.map(str::to_string),
+            failure_banners: error.into_iter().map(str::to_string).collect(),
             ..Default::default()
         }
     }
@@ -509,7 +532,7 @@ mod tests {
     fn idle(error: Option<&str>) -> CodexDesktopSnapshot {
         CodexDesktopSnapshot {
             idle: true,
-            terminal_failure: error.map(str::to_string),
+            failure_banners: error.into_iter().map(str::to_string).collect(),
             ..Default::default()
         }
     }
@@ -540,7 +563,7 @@ mod tests {
                 .observe_snapshot(CodexDesktopSnapshot {
                     reconnect_attempt: Some(5),
                     idle: true,
-                    terminal_failure: Some("unexpected status 503 service unavailable".to_string()),
+                    failure_banners: vec!["unexpected status 503 service unavailable".to_string()],
                     ..Default::default()
                 })
                 .1
@@ -596,6 +619,37 @@ mod tests {
     fn historical_error_visible_only_after_monitor_start_does_not_recover() {
         let mut tracker = ReconnectTracker::default();
         assert!(!tracker.observe_snapshot(idle(Some("old request failed"))).1);
+    }
+
+    #[test]
+    fn existing_failure_banner_is_the_running_turn_baseline() {
+        let mut tracker = ReconnectTracker::default();
+        assert!(!tracker.observe_snapshot(running(Some("banner-1"))).1);
+        assert!(!tracker.observe_snapshot(idle(Some("banner-1"))).1);
+    }
+
+    #[test]
+    fn a_new_banner_id_triggers_even_when_the_error_text_would_match() {
+        let mut tracker = ReconnectTracker::default();
+        assert!(!tracker.observe_snapshot(running(Some("banner-1"))).1);
+        assert!(
+            !tracker
+                .observe_snapshot(CodexDesktopSnapshot {
+                    running: true,
+                    failure_banners: vec!["banner-1".to_string(), "banner-2".to_string()],
+                    ..Default::default()
+                })
+                .1
+        );
+        assert!(
+            tracker
+                .observe_snapshot(CodexDesktopSnapshot {
+                    idle: true,
+                    failure_banners: vec!["banner-1".to_string(), "banner-2".to_string()],
+                    ..Default::default()
+                })
+                .1
+        );
     }
 
     #[test]
