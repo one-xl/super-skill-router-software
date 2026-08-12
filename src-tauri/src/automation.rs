@@ -194,12 +194,17 @@ mod win {
             .into_iter()
             .filter_map(|element| element.get_name().ok())
             .collect::<Vec<_>>();
+        let running = names.iter().any(|name| is_stop_button(name));
+        let composer_available = composer(&root).is_ok();
         Ok(CodexDesktopSnapshot {
             reconnect_attempt: names
                 .iter()
                 .find_map(|text| reconnect_attempt_from_text(text)),
-            running: names.iter().any(|name| is_stop_button(name)),
-            idle: names.iter().any(|name| is_send_button(name)),
+            running,
+            // The disabled grey send arrow has no accessible name in current
+            // ChatGPT Desktop builds. A live editable composer with no stop
+            // button is the stable idle state exposed by UI Automation.
+            idle: is_idle_composer_state(running, composer_available),
             failure_banners: failure_banner_ids(&automation, &root),
         })
     }
@@ -258,11 +263,8 @@ mod win {
         )
     }
 
-    pub(super) fn is_send_button(name: &str) -> bool {
-        matches!(
-            normalized_button_name(name).as_str(),
-            "发送" | "send" | "发送消息" | "send message"
-        )
+    pub(super) fn is_idle_composer_state(running: bool, composer_available: bool) -> bool {
+        composer_available && !running
     }
 
     pub fn send_to_desktop(executables: &[&str], text: &str, submit: bool) -> Result<(), String> {
@@ -376,12 +378,17 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn recognizes_desktop_run_and_idle_buttons() {
+    fn recognizes_desktop_stop_buttons() {
         assert!(super::win::is_stop_button("停止"));
         assert!(super::win::is_stop_button("Stop generating"));
-        assert!(super::win::is_send_button("发送"));
-        assert!(super::win::is_send_button("Send message"));
-        assert!(!super::win::is_send_button("跳转到用户消息 2"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn derives_idle_from_editable_composer_after_stop_disappears() {
+        assert!(!super::win::is_idle_composer_state(true, true));
+        assert!(super::win::is_idle_composer_state(false, true));
+        assert!(!super::win::is_idle_composer_state(false, false));
     }
 
     #[cfg(target_os = "windows")]

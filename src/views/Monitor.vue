@@ -96,7 +96,7 @@ onUnmounted(() => { unlisten?.(); });
       <div class="grid gap-px border-t border-stone-200 bg-stone-200 sm:grid-cols-3">
         <div class="bg-white px-5 py-3 text-[11px]"><span :class="status?.running_seen ? 'text-emerald-700' : 'text-stone-400'">{{ status?.running_seen ? '已看到停止按钮' : '等待停止按钮' }}</span></div>
         <div class="bg-white px-5 py-3 text-[11px]"><span :class="status?.failure_seen ? 'text-rose-700' : 'text-stone-400'">{{ status?.failure_seen ? '已捕获本轮新错误' : '等待本轮新错误' }}</span></div>
-        <div class="bg-white px-5 py-3 text-[11px]"><span :class="status?.send_button_visible ? 'text-emerald-700' : 'text-stone-400'">{{ status?.send_button_visible ? '发送箭头已出现' : '等待发送箭头' }}</span></div>
+        <div class="bg-white px-5 py-3 text-[11px]"><span :class="status?.send_button_visible ? 'text-emerald-700' : 'text-stone-400'">{{ status?.send_button_visible ? '任务已停止，可输入' : '等待停止按钮消失' }}</span></div>
       </div>
 
       <div v-if="status?.last_error" class="notice-error m-5">{{ status.last_error }}</div>
