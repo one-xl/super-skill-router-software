@@ -159,7 +159,7 @@ impl DesktopMonitorSupervisor {
         let (stop_tx, stop_rx) = mpsc::channel(1);
         let status = DesktopMonitorStatus {
             target_id: target_id.clone(),
-            target_label: "Codex Desktop".to_string(),
+            target_label: "ChatGPT Desktop (Codex)".to_string(),
             state: MonitorState::Watching,
             reconnect_attempt: 0,
             recovery_sent_count: 0,

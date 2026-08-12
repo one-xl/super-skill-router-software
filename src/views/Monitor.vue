@@ -69,7 +69,7 @@ onUnmounted(() => { unlisten?.(); });
       <div>
         <p class="page-kicker">Monitor</p>
         <h1 class="page-title">桌面 Agent 自动恢复</h1>
-        <p class="page-description">监控 Codex Desktop 的真实连接日志，第 5 次重连失败后自动发送恢复指令。</p>
+        <p class="page-description">监控 ChatGPT Desktop（Codex）的真实连接日志，第 5 次重连失败后自动发送恢复指令。</p>
       </div>
       <button v-if="active" type="button" class="button-secondary" :disabled="working" @click="stop"><Square class="size-4" />停止监控</button>
       <button v-else type="button" class="button-primary" :disabled="working || loading" @click="start"><LoaderCircle v-if="working" class="size-4 animate-spin" /><Play v-else class="size-4" />开始监控</button>
@@ -81,7 +81,7 @@ onUnmounted(() => { unlisten?.(); });
       <div class="flex flex-wrap items-center justify-between gap-4 border-b border-stone-200 px-5 py-4">
         <div class="flex items-center gap-3">
           <span class="flex size-10 items-center justify-center rounded-md bg-stone-100 text-stone-700"><MonitorCog class="size-5" /></span>
-          <div><h2 class="section-title">Codex Desktop</h2><p class="mt-1 text-[11px] text-stone-500">不启动 CLI，直接观察桌面应用自身日志。</p></div>
+          <div><h2 class="section-title">ChatGPT Desktop（Codex）</h2><p class="mt-1 text-[11px] text-stone-500">不启动 CLI，直接观察桌面应用自身日志。</p></div>
         </div>
         <span v-if="status" class="inline-flex items-center gap-1.5 text-[12px] font-medium" :class="stateClass(status.state)"><CheckCircle2 v-if="status.state === 'watching'" class="size-4" /><AlertCircle v-else class="size-4" />{{ stateLabel(status.state) }}</span>
         <span v-else class="text-[12px] text-stone-400">未运行</span>

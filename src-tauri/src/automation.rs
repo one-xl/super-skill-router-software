@@ -1,7 +1,8 @@
 //! Windows desktop-agent automation.
 //!
-//! The visible Codex window is owned by `ChatGPT.exe`; `codex.exe` is its
-//! headless app-server. Claude Desktop exposes a visible `claude.exe` window.
+//! The current Codex desktop product is named ChatGPT Desktop and its visible
+//! window is owned by `ChatGPT.exe`; `codex.exe` is the headless app-server.
+//! Claude Desktop exposes a visible `claude.exe` window.
 //! We locate the editable composer through UI Automation before pasting so the
 //! operation does not depend on whichever control happened to have focus.
 
@@ -29,10 +30,6 @@ mod win {
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
         TH32CS_SNAPPROCESS,
     };
-    use windows::Win32::System::Threading::{
-        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
-        PROCESS_QUERY_LIMITED_INFORMATION,
-    };
     use windows::Win32::UI::WindowsAndMessaging::{
         EnumWindows, GetWindowThreadProcessId, IsWindowVisible, SetForegroundWindow, ShowWindow,
         SW_RESTORE,
@@ -52,30 +49,6 @@ mod win {
             return BOOL(0);
         }
         BOOL(1)
-    }
-
-    fn process_path(pid: u32) -> Option<String> {
-        unsafe {
-            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-            let mut buffer = vec![0_u16; 32_768];
-            let mut length = buffer.len() as u32;
-            let result = QueryFullProcessImageNameW(
-                process,
-                PROCESS_NAME_FORMAT(0),
-                windows::core::PWSTR(buffer.as_mut_ptr()),
-                &mut length,
-            );
-            let _ = CloseHandle(process);
-            result.ok()?;
-            Some(String::from_utf16_lossy(&buffer[..length as usize]))
-        }
-    }
-
-    pub(super) fn is_desktop_process(name: &str, path: Option<&str>) -> bool {
-        if name.eq_ignore_ascii_case("ChatGPT.exe") {
-            return path.is_some_and(|value| value.to_ascii_lowercase().contains("codex"));
-        }
-        true
     }
 
     fn matching_pids(executables: &[&str]) -> Result<HashSet<u32>, String> {
@@ -100,9 +73,7 @@ mod win {
                     .position(|value| *value == 0)
                     .unwrap_or(entry.szExeFile.len());
                 let name = String::from_utf16_lossy(&entry.szExeFile[..end]).to_ascii_lowercase();
-                if names.contains(&name)
-                    && is_desktop_process(&name, process_path(entry.th32ProcessID).as_deref())
-                {
+                if names.contains(&name) {
                     pids.insert(entry.th32ProcessID);
                 }
                 next = Process32NextW(snapshot, &mut entry);
@@ -228,9 +199,6 @@ pub async fn inject_text_to_agent(
 mod tests {
     use super::target_executables;
 
-    #[cfg(target_os = "windows")]
-    use super::win::is_desktop_process;
-
     #[test]
     fn accepts_only_desktop_targets() {
         assert_eq!(
@@ -243,19 +211,5 @@ mod tests {
         );
         assert!(target_executables("codex_cli").is_none());
         assert!(target_executables("claude_code").is_none());
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn does_not_treat_the_regular_chatgpt_app_as_codex() {
-        assert!(is_desktop_process(
-            "ChatGPT.exe",
-            Some(r"C:\Program Files\WindowsApps\OpenAI.Codex_1.0\app\ChatGPT.exe")
-        ));
-        assert!(!is_desktop_process(
-            "ChatGPT.exe",
-            Some(r"C:\Program Files\WindowsApps\OpenAI.ChatGPT_1.0\app\ChatGPT.exe")
-        ));
-        assert!(is_desktop_process("Codex.exe", None));
     }
 }

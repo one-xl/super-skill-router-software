@@ -131,13 +131,13 @@ onMounted(() => { void load(); });
           <label class="flex cursor-pointer items-start justify-between gap-5 py-4">
             <span>
               <span class="block text-[13px] font-medium text-stone-800">LLM 精炼后自动填入桌面 Agent</span>
-              <span class="mt-1 block text-[11px] leading-5 text-stone-500">将精炼结果填入所选 Codex Desktop 或 Claude Code Desktop 对话框，但不会自动发送。</span>
+              <span class="mt-1 block text-[11px] leading-5 text-stone-500">将精炼结果填入所选 ChatGPT Desktop（Codex）或 Claude Code Desktop 对话框，但不会自动发送。</span>
             </span>
             <input v-model="settings.automation.autoInjectAfterRefine" type="checkbox" class="mt-0.5 size-4 shrink-0 accent-teal-700" />
           </label>
           <label class="flex cursor-pointer items-start justify-between gap-5 py-4">
             <span>
-              <span class="block text-[13px] font-medium text-stone-800">启动软件时监控 Codex Desktop 重连</span>
+              <span class="block text-[13px] font-medium text-stone-800">启动软件时监控 ChatGPT Desktop（Codex）重连</span>
               <span class="mt-1 block text-[11px] leading-5 text-stone-500">仅在 Codex 日志确认第 5 次重连失败后，自动输入并发送“继续并恢复todo-list”。</span>
             </span>
             <input v-model="settings.automation.startCodexRecoveryMonitorOnLaunch" type="checkbox" class="mt-0.5 size-4 shrink-0 accent-teal-700" />

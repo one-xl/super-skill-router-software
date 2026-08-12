@@ -255,7 +255,7 @@ onMounted(async () => {
             <button type="button" class="button-secondary" :disabled="!conversion" @click="copyPrompt"><Check v-if="copied" class="size-4 text-emerald-600" /><Clipboard v-else class="size-4" />{{ copied ? '已复制' : '复制' }}</button>
             <div class="flex items-center gap-1">
               <select v-model="injectTarget" class="select-field h-8 text-[11px]" :disabled="!conversion || injecting">
-                <option value="codex_desktop">Codex Desktop</option>
+                <option value="codex_desktop">ChatGPT Desktop（Codex）</option>
                 <option value="claude_code_desktop">Claude Code Desktop</option>
               </select>
               <button type="button" class="button-primary h-8 px-3" :disabled="!conversion || injecting || refining" title="填入桌面 Agent 对话框，不自动发送" @click="injectToAgent">
