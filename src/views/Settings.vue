@@ -4,12 +4,12 @@ import { Bot, Check, CircleAlert, CircleCheck, ExternalLink, KeyRound, LoaderCir
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { storeToRefs } from "pinia";
 import type { ApiConfig, AppSettings } from "../types/skill";
-import { useSettingsStore } from "../stores/settings";
+import { cloneSettings, useSettingsStore } from "../stores/settings";
 
 const SKILLSMP_DOCS_URL = "https://skillsmp.com/zh/docs/api";
 const settingsStore = useSettingsStore();
 const { loading, saving } = storeToRefs(settingsStore);
-const settings = ref<AppSettings>(structuredClone(settingsStore.settings));
+const settings = ref<AppSettings>(cloneSettings(settingsStore.settings));
 const saved = ref(false);
 const error = ref<string | null>(null);
 const apiSections = [
@@ -31,7 +31,7 @@ async function save() {
   error.value = null;
   try {
     await settingsStore.save(settings.value);
-    settings.value = structuredClone(settingsStore.settings);
+    settings.value = cloneSettings(settingsStore.settings);
     saved.value = true;
     window.setTimeout(() => { saved.value = false; }, 1600);
   } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause); }
@@ -44,7 +44,7 @@ async function openSkillsMpDocs() {
 onMounted(async () => {
   try {
     if (!settingsStore.loaded) await settingsStore.load();
-    settings.value = structuredClone(settingsStore.settings);
+    settings.value = cloneSettings(settingsStore.settings);
   } catch (cause) {
     error.value = String(cause);
   }

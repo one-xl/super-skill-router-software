@@ -10,6 +10,15 @@ const defaultSettings = (): AppSettings => ({
   automation: { autoInjectAfterRefine: false, startCodexRecoveryMonitorOnLaunch: false, recoveryText: "继续并恢复todo-list" },
 });
 
+export function cloneSettings(value: AppSettings): AppSettings {
+  return {
+    deepScan: { ...value.deepScan },
+    prompt: { ...value.prompt },
+    skillsMp: { ...value.skillsMp },
+    automation: { ...value.automation },
+  };
+}
+
 export const useSettingsStore = defineStore("settings", () => {
   const settings = ref<AppSettings>(defaultSettings());
   const loading = ref(false);
@@ -34,8 +43,8 @@ export const useSettingsStore = defineStore("settings", () => {
   }
 
   async function save(next?: AppSettings) {
-    const previous = structuredClone(settings.value);
-    if (next) settings.value = structuredClone(next);
+    const previous = cloneSettings(settings.value);
+    if (next) settings.value = cloneSettings(next);
     saving.value = true;
     error.value = null;
     try {
@@ -53,7 +62,7 @@ export const useSettingsStore = defineStore("settings", () => {
   }
 
   async function setAutoInjectAfterRefine(value: boolean) {
-    const next = structuredClone(settings.value);
+    const next = cloneSettings(settings.value);
     next.automation.autoInjectAfterRefine = value;
     await save(next);
   }
