@@ -8,6 +8,7 @@ use tauri_plugin_opener::OpenerExt;
 use uuid::Uuid;
 
 use crate::fetcher::{self, RemoteSkill};
+use crate::local_import;
 use crate::scanner::{self, ScanMode, ScanReport};
 use crate::settings;
 use crate::targets::{
@@ -22,6 +23,13 @@ pub struct PreparedInstall {
     pub token: String,
     pub directory_name: String,
     pub commit_sha: String,
+}
+
+#[derive(Serialize)]
+pub struct PreparedLocalImport {
+    pub token: String,
+    pub directory_name: String,
+    pub skill_name: String,
 }
 
 #[derive(Serialize)]
@@ -68,6 +76,34 @@ pub async fn prepare_skill_install(
         token,
         directory_name,
         commit_sha,
+    })
+}
+
+#[tauri::command]
+pub fn prepare_local_skill_import(
+    app: AppHandle,
+    archive_path: String,
+    pending: tauri::State<'_, PendingInstallStore>,
+) -> Result<PreparedLocalImport, String> {
+    let token = Uuid::new_v4().to_string();
+    let cache = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| format!("无法确定导入缓存目录：{error}"))?
+        .join("pending-installs")
+        .join(&token);
+    let imported = local_import::import_archive(std::path::Path::new(&archive_path), &cache)?;
+    let directory_name = imported.skill.directory_name.clone();
+    let skill_name = imported.display_name;
+    pending
+        .0
+        .lock()
+        .map_err(|_| "安装状态不可用，请重试。".to_string())?
+        .insert(token.clone(), imported.skill);
+    Ok(PreparedLocalImport {
+        token,
+        directory_name,
+        skill_name,
     })
 }
 

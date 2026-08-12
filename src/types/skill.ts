@@ -74,6 +74,11 @@ export interface PreparedInstall {
   directory_name: string;
   commit_sha: string;
 }
+export interface PreparedLocalImport {
+  token: string;
+  directory_name: string;
+  skill_name: string;
+}
 
 export type ApiFormat = "openai" | "anthropic";
 export interface ApiConfig { format: ApiFormat; apiUrl: string; apiKey: string; model: string; apiKeyConfigured?: boolean; }

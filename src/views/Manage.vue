@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { AlertTriangle, Boxes, ChevronUp, CloudUpload, Eye, FolderOpen, LayoutGrid, LoaderCircle, MonitorCheck, RefreshCw, Trash2 } from "@lucide/vue";
+import { open } from "@tauri-apps/plugin-dialog";
+import { AlertTriangle, Boxes, ChevronUp, CloudUpload, Eye, FileUp, FolderOpen, LayoutGrid, LoaderCircle, MonitorCheck, RefreshCw, ShieldAlert, Sparkles, Trash2 } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
 import SkillPreviewPanel from "../components/SkillPreviewPanel.vue";
 import TargetIcon from "../components/TargetIcon.vue";
-import { deleteInstallationRecords, loadInstallationRecords } from "../lib/database";
-import type { InstallationRecord, PreparedUninstall, TargetId, TargetSkillInventory } from "../types/skill";
+import ScanProgress from "../components/ScanProgress.vue";
+import UploadGuide from "../components/UploadGuide.vue";
+import { deleteInstallationRecords, loadInstallationRecords, recordLocalInstallations } from "../lib/database";
+import type { BatchInstallReport, InstallationRecord, PreparedLocalImport, PreparedUninstall, ScanMode, ScanReport, TargetDetection, TargetId, TargetSkillInventory } from "../types/skill";
 
 type MatrixRow = { directory_name: string; records: InstallationRecord[]; live: TargetId[] };
 type ManageView = "overview" | TargetId;
@@ -21,6 +24,16 @@ const preview = ref<{ directoryName: string; name: string; content: string } | n
 const previewLoading = ref<string | null>(null);
 const pendingUninstall = ref<PendingUninstall | null>(null);
 const activeView = ref<ManageView>("overview");
+const importing = ref(false);
+const localImport = ref<PreparedLocalImport | null>(null);
+const importTargets = ref<TargetDetection[]>([]);
+const selectedImportTargets = ref<TargetId[]>([]);
+const importScanning = ref(false);
+const importScanMode = ref<ScanMode>("fast");
+const importScanReport = ref<ScanReport | null>(null);
+const importScanSkipped = ref(false);
+const importDeploying = ref(false);
+const importDeployment = ref<BatchInstallReport | null>(null);
 
 const targets: TargetId[] = ["claude_code", "codex_cli", "codex_desktop", "claude_desktop"];
 const labels: Record<TargetId, string> = { claude_code: "Claude Code", codex_cli: "Codex CLI", codex_desktop: "Codex Desktop", claude_desktop: "Claude Desktop" };
@@ -53,6 +66,7 @@ const applicationRows = computed(() => {
   if (!target) return [];
   return rows.value.filter((row) => row.live.includes(target) || row.records.some((record) => record.target === target));
 });
+const importUploadPackages = computed(() => importDeployment.value?.results.flatMap((result) => result.outcome?.kind === "packaged_for_upload" && result.outcome.zip_path ? [{ targetName: result.target_name, zipPath: result.outcome.zip_path }] : []) ?? []);
 
 function fail(cause: unknown) {
   return typeof cause === "string" ? cause : cause instanceof Error ? cause.message : "操作失败，请重试。";
@@ -187,6 +201,79 @@ async function revealPackage(record: InstallationRecord) {
   finally { packageOpening.value = null; }
 }
 
+async function chooseArchive() {
+  if (importing.value || importDeploying.value) return;
+  const selected = await open({
+    multiple: false,
+    directory: false,
+    title: "选择 skill 压缩包",
+    filters: [{ name: "Skill 压缩包", extensions: ["zip"] }],
+  });
+  if (typeof selected !== "string") return;
+  importing.value = true;
+  error.value = null;
+  try {
+    const [prepared, detections] = await Promise.all([
+      invoke<PreparedLocalImport>("prepare_local_skill_import", { archivePath: selected }),
+      invoke<TargetDetection[]>("detect_skill_targets"),
+    ]);
+    localImport.value = prepared;
+    importTargets.value = detections;
+    selectedImportTargets.value = detections
+      .filter((target) => target.available && target.id !== "claude_desktop")
+      .map((target) => target.id);
+    importScanReport.value = null;
+    importScanSkipped.value = false;
+    importDeployment.value = null;
+  } catch (cause) {
+    error.value = fail(cause);
+  } finally {
+    importing.value = false;
+  }
+}
+
+async function scanImportedSkill(mode: ScanMode | "skip") {
+  if (!localImport.value || importScanning.value) return;
+  if (mode === "skip") {
+    importScanSkipped.value = true;
+    importScanReport.value = null;
+    return;
+  }
+  importScanMode.value = mode;
+  importScanning.value = true;
+  error.value = null;
+  try {
+    importScanReport.value = await invoke<ScanReport>("scan_prepared_skill", { token: localImport.value.token, mode });
+  } catch (cause) {
+    error.value = fail(cause);
+  } finally {
+    importScanning.value = false;
+  }
+}
+
+async function deployImportedSkill() {
+  if (!localImport.value || importDeploying.value) return;
+  if (!selectedImportTargets.value.length) {
+    error.value = "请至少选择一个部署目标。";
+    return;
+  }
+  importDeploying.value = true;
+  error.value = null;
+  try {
+    const report = await invoke<BatchInstallReport>("install_prepared_skill", {
+      token: localImport.value.token,
+      targets: selectedImportTargets.value,
+    });
+    importDeployment.value = report;
+    await recordLocalInstallations(localImport.value.skill_name, localImport.value.directory_name, report);
+    await load();
+  } catch (cause) {
+    error.value = fail(cause);
+  } finally {
+    importDeploying.value = false;
+  }
+}
+
 onMounted(() => { void load(); });
 </script>
 
@@ -194,7 +281,7 @@ onMounted(() => { void load(); });
   <section class="page-shell">
     <div class="page-header">
       <div><p class="page-kicker">Manage</p><h1 class="page-title">Skill 管理</h1><p class="page-description">查看全局同步状态，或按目标端核对本机 skill。</p></div>
-      <button class="icon-button" title="刷新" :disabled="loading" @click="load"><RefreshCw class="size-4" :class="loading && 'animate-spin'" /></button>
+      <div class="flex items-center gap-2"><button class="button-secondary h-9 px-3" type="button" :disabled="importing || importDeploying" @click="chooseArchive"><LoaderCircle v-if="importing" class="size-4 animate-spin" /><FileUp v-else class="size-4" />导入压缩包</button><button class="icon-button" title="刷新" :disabled="loading" @click="load"><RefreshCw class="size-4" :class="loading && 'animate-spin'" /></button></div>
     </div>
 
     <nav class="surface flex gap-1 overflow-x-auto p-1.5" aria-label="Skill 管理视图">
@@ -202,6 +289,24 @@ onMounted(() => { void load(); });
     </nav>
 
     <p v-if="error" class="notice-error mb-4 mt-5">{{ error }}</p>
+
+    <section v-if="localImport" class="surface mt-5 overflow-hidden">
+      <div class="flex flex-wrap items-start justify-between gap-4 border-b border-stone-200 px-5 py-4">
+        <div><p class="section-title">导入本地 Skill</p><p class="mt-1 text-[12px] text-stone-500"><strong class="text-stone-800">{{ localImport.skill_name }}</strong> · {{ localImport.directory_name }}。将完整目录部署到所选目标端。</p></div>
+        <button v-if="!importDeployment" type="button" class="icon-button" title="取消导入" :disabled="importScanning || importDeploying" @click="localImport = null"><Trash2 class="size-4" /></button>
+      </div>
+      <div v-if="!importDeployment && !importScanReport && !importScanSkipped" class="p-5">
+        <p class="inline-flex items-center gap-2 text-[13px] font-medium text-stone-800"><ShieldAlert class="size-4 text-teal-700" />解压完成，选择安装前扫描方式</p>
+        <div class="mt-3 flex flex-wrap gap-2"><button type="button" class="button-secondary" :disabled="importScanning" @click="scanImportedSkill('skip')">跳过扫描</button><button type="button" class="button-primary" :disabled="importScanning" @click="scanImportedSkill('fast')"><LoaderCircle v-if="importScanning" class="size-4 animate-spin" />快速扫描</button><button type="button" class="button-secondary" :disabled="importScanning" @click="scanImportedSkill('deep')"><Sparkles class="size-4" />深度扫描</button></div>
+        <ScanProgress :active="importScanning" :mode="importScanMode" />
+      </div>
+      <div v-else-if="!importDeployment" class="p-5">
+        <div class="flex flex-wrap items-center justify-between gap-3"><p class="inline-flex items-center gap-2 text-[13px] font-medium text-stone-800"><ShieldAlert class="size-4" :class="importScanReport?.risk_assessment.recommendation === 'SAFE' ? 'text-emerald-600' : 'text-amber-600'" />{{ importScanSkipped ? '已跳过扫描' : `扫描完成：${importScanReport?.risk_assessment.score}/100 · ${importScanReport?.risk_assessment.recommendation.replace(/_/g, ' ')}` }}</p><button type="button" class="button-primary" :disabled="importDeploying || !selectedImportTargets.length" @click="deployImportedSkill"><LoaderCircle v-if="importDeploying" class="size-4 animate-spin" />{{ importDeploying ? '正在部署' : '部署到所选目标' }}</button></div>
+        <fieldset class="mt-4 grid gap-2 sm:grid-cols-2"><label v-for="target in importTargets" :key="target.id" class="flex items-center justify-between gap-3 rounded-md border border-stone-200 bg-white px-3 py-2 text-[12px]" :class="target.id === 'claude_desktop' ? 'border-amber-200' : ''"><span class="flex items-center gap-2"><input v-model="selectedImportTargets" type="checkbox" :value="target.id" :disabled="target.id !== 'claude_desktop' && !target.available" />{{ target.name }}</span><span class="text-[11px] text-stone-500">{{ target.id === 'claude_desktop' ? '打包后待上传' : target.available ? '已探测' : '未探测到' }}</span></label></fieldset>
+        <p class="mt-3 text-[11px] text-stone-500">Codex CLI 与 ChatGPT Desktop 共用 CODEX_HOME，选择两端时只写入一次；Claude Desktop 仅生成待上传 zip，不会显示为已安装。</p>
+      </div>
+      <div v-else class="notice-success m-5"><p class="font-medium">导入部署完成</p><ul class="mt-2 space-y-1 text-[12px]"><li v-for="result in importDeployment.results" :key="result.target">{{ result.target_name }}：{{ result.outcome?.kind === 'packaged_for_upload' ? '已打包，待上传' : result.outcome ? '已部署' : result.error }}</li></ul><UploadGuide v-if="importUploadPackages.length" :packages="importUploadPackages" /></div>
+    </section>
 
     <template v-if="activeView === 'overview'">
       <div class="surface mt-5 grid overflow-hidden sm:grid-cols-4">

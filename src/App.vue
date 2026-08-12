@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, type Component } from "vue";
 import {
   Braces,
   Database,
@@ -28,6 +28,15 @@ const SETUP_DISMISSED_KEY = "super-skill-router:skillsmp-setup-dismissed";
 const SKILLSMP_DOCS_URL = "https://skillsmp.com/zh/docs/api";
 const view = ref<ViewId>("discover");
 const showSkillsMpSetup = ref(false);
+const viewComponents: Record<ViewId, Component> = {
+  discover: Discover,
+  compose: Compose,
+  manage: Manage,
+  index: LocalIndex,
+  monitor: MonitorView,
+  settings: SettingsView,
+};
+const activeComponent = computed(() => viewComponents[view.value]);
 
 const primaryNavigation = [
   { id: "discover" as const, label: "发现", hint: "搜索与部署", icon: Search },
@@ -171,12 +180,9 @@ onMounted(() => {
       </header>
       <main class="workspace-content">
         <Transition name="page" mode="out-in">
-          <Discover v-if="view === 'discover'" key="discover" />
-          <Compose v-else-if="view === 'compose'" key="compose" />
-          <Manage v-else-if="view === 'manage'" key="manage" />
-          <LocalIndex v-else-if="view === 'index'" key="index" />
-          <MonitorView v-else-if="view === 'monitor'" key="monitor" />
-          <SettingsView v-else key="settings" />
+          <KeepAlive>
+            <component :is="activeComponent" :key="view" />
+          </KeepAlive>
         </Transition>
       </main>
     </div>

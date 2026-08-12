@@ -2,6 +2,7 @@ mod automation;
 mod converter;
 mod fetcher;
 mod install;
+mod local_import;
 mod management;
 mod monitor;
 mod packager;
@@ -49,6 +50,7 @@ pub fn run() -> tauri::Result<()> {
             settings::refine_prompt,
             skillsmp::search_skillsmp,
             install::prepare_skill_install,
+            install::prepare_local_skill_import,
             install::scan_prepared_skill,
             install::install_prepared_skill,
             install::reveal_packaged_skill,
