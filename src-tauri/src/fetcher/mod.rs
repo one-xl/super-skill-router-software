@@ -78,7 +78,8 @@ pub async fn download_skillsmp_skill(
         .map_err(|error| format!("无法创建下载缓存目录：{error}"))?;
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Super-Skill-Router/0.1")
-        .timeout(Duration::from_secs(45))
+        .connect_timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(300))
         .build()
         .map_err(|error| format!("无法初始化下载客户端：{error}"))?;
     let commit_sha = resolve_commit_sha(&client, skill).await?;
@@ -412,6 +413,19 @@ fn validate_discovered_skill(skill: &RemoteSkill) -> Result<(), String> {
     Ok(())
 }
 
+fn request_error_details(error: &reqwest::Error) -> String {
+    let mut details = vec![error.to_string()];
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        let message = cause.to_string();
+        if !details.iter().any(|value| value == &message) {
+            details.push(message);
+        }
+        source = cause.source();
+    }
+    details.join("；原因：")
+}
+
 pub(crate) fn remove_directory(path: &PathBuf) -> std::io::Result<()> {
     if path.exists() {
         std::fs::remove_dir_all(path)
@@ -514,5 +528,27 @@ mod tests {
             .join("references")
             .join("classical-texts.md")
             .is_file());
+    }
+
+    #[tokio::test]
+    #[ignore = "downloads a live SkillsMP GitHub source through the system proxy"]
+    async fn downloads_skillsmp_tree_when_manifest_is_forbidden() {
+        let download_root = tempfile::tempdir().expect("download root");
+        let skill = RemoteSkill {
+            name: "jeo-skill".into(),
+            repo: "akillness/jeo-skills".into(),
+            path: ".agent-skills/jeo-skill".into(),
+            default_branch: "main".into(),
+            commit_sha: String::new(),
+            files: Vec::new(),
+            remote_source: "skillsmp".into(),
+        };
+
+        let (downloaded, commit_sha) = download_skillsmp_skill(&skill, download_root.path(), None)
+            .await
+            .expect("download SkillsMP tree through GitHub fallback");
+
+        assert_eq!(commit_sha.len(), 40);
+        assert!(downloaded.source_dir.join("SKILL.md").is_file());
     }
 }

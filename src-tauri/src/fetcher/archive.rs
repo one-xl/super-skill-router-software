@@ -4,7 +4,7 @@ use std::path::Path;
 use reqwest::Client;
 use zip::ZipArchive;
 
-use super::{remote_path, remove_directory, RemoteSkill};
+use super::{remote_path, remove_directory, request_error_details, RemoteSkill};
 
 pub async fn download_and_extract(
     client: &Client,
@@ -19,7 +19,7 @@ pub async fn download_and_extract(
         .get(url)
         .send()
         .await
-        .map_err(|error| format!("无法下载仓库归档：{error}"))?;
+        .map_err(|error| format!("无法下载仓库归档：{}", request_error_details(&error)))?;
     if !response.status().is_success() {
         return Err(format!("下载仓库归档失败（HTTP {}）。", response.status()));
     }
@@ -47,11 +47,12 @@ pub async fn download_and_extract_tree(
         "https://codeload.github.com/{}/zip/{commit_sha}",
         skill.repo
     );
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|error| format!("无法下载 SkillsMP 来源的仓库归档：{error}"))?;
+    let response = client.get(url).send().await.map_err(|error| {
+        format!(
+            "无法下载 SkillsMP 来源的仓库归档：{}",
+            request_error_details(&error)
+        )
+    })?;
     if !response.status().is_success() {
         return Err(format!(
             "下载 SkillsMP 来源的仓库归档失败（HTTP {}）。",
