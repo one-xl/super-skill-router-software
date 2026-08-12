@@ -45,7 +45,10 @@ async function stop() {
   if (working.value || !active.value) return;
   working.value = true;
   error.value = null;
-  try { await invoke("stop_desktop_monitor", { targetId: "codex_desktop" }); }
+  try {
+    await invoke("stop_desktop_monitor", { targetId: "codex_desktop" });
+    await refresh();
+  }
   catch (cause) { error.value = fail(cause); }
   finally { working.value = false; }
 }

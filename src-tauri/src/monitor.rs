@@ -7,13 +7,14 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, watch, Mutex};
 
 use crate::automation::CodexDesktopSnapshot;
 use crate::{automation, settings};
@@ -45,13 +46,38 @@ pub struct DesktopMonitorStatus {
 }
 
 struct MonitorEntry {
+    id: u64,
     status: DesktopMonitorStatus,
-    stop_tx: mpsc::Sender<()>,
+    stop_tx: mpsc::UnboundedSender<()>,
 }
 
-#[derive(Default)]
+struct MonitorTaskContext {
+    app: AppHandle,
+    target_id: String,
+    log_root: PathBuf,
+    initial_log_path: PathBuf,
+    recovery_text: String,
+    stop_rx: mpsc::UnboundedReceiver<()>,
+    shutdown_rx: watch::Receiver<bool>,
+    monitors: Arc<Mutex<HashMap<String, MonitorEntry>>>,
+    monitor_id: u64,
+}
+
 pub struct DesktopMonitorSupervisor {
     monitors: Arc<Mutex<HashMap<String, MonitorEntry>>>,
+    next_id: AtomicU64,
+    shutdown_tx: watch::Sender<bool>,
+}
+
+impl Default for DesktopMonitorSupervisor {
+    fn default() -> Self {
+        let (shutdown_tx, _) = watch::channel(false);
+        Self {
+            monitors: Arc::new(Mutex::new(HashMap::new())),
+            next_id: AtomicU64::new(1),
+            shutdown_tx,
+        }
+    }
 }
 
 #[derive(Default, Debug)]
@@ -248,7 +274,8 @@ impl DesktopMonitorSupervisor {
         let log_root = codex_log_root()?;
         let log_path = newest_log(&log_root)?;
         let recovery_text = settings::load(&app)?.automation.recovery_text;
-        let (stop_tx, stop_rx) = mpsc::channel(1);
+        let monitor_id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (stop_tx, stop_rx) = mpsc::unbounded_channel();
         let status = DesktopMonitorStatus {
             target_id: target_id.clone(),
             target_label: "ChatGPT Desktop (Codex)".to_string(),
@@ -265,6 +292,7 @@ impl DesktopMonitorSupervisor {
         monitors.insert(
             target_id.clone(),
             MonitorEntry {
+                id: monitor_id,
                 status: status.clone(),
                 stop_tx,
             },
@@ -273,28 +301,40 @@ impl DesktopMonitorSupervisor {
         let _ = app.emit("desktop-monitor-status", &status);
 
         let shared = Arc::clone(&self.monitors);
-        tokio::spawn(tail_codex_log(
+        tokio::spawn(tail_codex_log(MonitorTaskContext {
             app,
             target_id,
             log_root,
-            log_path,
+            initial_log_path: log_path,
             recovery_text,
             stop_rx,
-            shared,
-        ));
+            shutdown_rx: self.shutdown_tx.subscribe(),
+            monitors: shared,
+            monitor_id,
+        }));
         Ok(())
     }
 
-    pub async fn stop(&self, target_id: &str) -> Result<(), String> {
-        let monitors = self.monitors.lock().await;
-        let entry = monitors
-            .get(target_id)
-            .ok_or_else(|| "该桌面 Agent 没有运行中的监控。".to_string())?;
-        entry
-            .stop_tx
-            .send(())
+    pub async fn stop(&self, app: &AppHandle, target_id: &str) -> Result<(), String> {
+        let entry = self
+            .monitors
+            .lock()
             .await
-            .map_err(|_| "监控任务已经结束。".to_string())
+            .remove(target_id)
+            .ok_or_else(|| "该桌面 Agent 没有运行中的监控。".to_string())?;
+        let mut status = entry.status;
+        status.state = MonitorState::Stopped;
+        status.reconnect_attempt = 0;
+        status.running_seen = false;
+        status.failure_seen = false;
+        status.send_button_visible = false;
+        let _ = entry.stop_tx.send(());
+        let _ = app.emit("desktop-monitor-status", &status);
+        Ok(())
+    }
+
+    pub fn request_shutdown(&self) {
+        let _ = self.shutdown_tx.send(true);
     }
 
     pub async fn list(&self) -> Vec<DesktopMonitorStatus> {
@@ -320,15 +360,18 @@ async fn update_status(
     }
 }
 
-async fn tail_codex_log(
-    app: AppHandle,
-    target_id: String,
-    log_root: PathBuf,
-    initial_log_path: PathBuf,
-    recovery_text: String,
-    mut stop_rx: mpsc::Receiver<()>,
-    monitors: Arc<Mutex<HashMap<String, MonitorEntry>>>,
-) {
+async fn tail_codex_log(context: MonitorTaskContext) {
+    let MonitorTaskContext {
+        app,
+        target_id,
+        log_root,
+        initial_log_path,
+        recovery_text,
+        mut stop_rx,
+        mut shutdown_rx,
+        monitors,
+        monitor_id,
+    } = context;
     let result = async {
         let file = tokio::fs::File::open(&initial_log_path)
             .await
@@ -346,6 +389,11 @@ async fn tail_codex_log(
         loop {
             tokio::select! {
                 _ = stop_rx.recv() => break,
+                changed = shutdown_rx.changed() => {
+                    if changed.is_err() || *shutdown_rx.borrow() {
+                        break;
+                    }
+                }
                 _ = tokio::time::sleep(std::time::Duration::from_millis(400)) => {
                     rotation_ticks = rotation_ticks.saturating_add(1);
                     if rotation_ticks >= 5 {
@@ -409,15 +457,38 @@ async fn tail_codex_log(
     }
     .await;
 
-    update_status(&app, &monitors, &target_id, |status| match result {
-        Ok(()) => status.state = MonitorState::Stopped,
-        Err(error) => {
-            status.state = MonitorState::Error;
-            status.last_error = Some(error);
+    finish_monitor(&app, &monitors, &target_id, monitor_id, result).await;
+}
+
+async fn finish_monitor(
+    app: &AppHandle,
+    monitors: &Arc<Mutex<HashMap<String, MonitorEntry>>>,
+    target_id: &str,
+    monitor_id: u64,
+    result: Result<(), String>,
+) {
+    let status = {
+        let mut lock = monitors.lock().await;
+        let is_current = lock
+            .get(target_id)
+            .is_some_and(|entry| entry.id == monitor_id);
+        if !is_current {
+            return;
         }
-    })
-    .await;
-    monitors.lock().await.remove(&target_id);
+        let mut entry = match lock.remove(target_id) {
+            Some(entry) => entry,
+            None => return,
+        };
+        match result {
+            Ok(()) => entry.status.state = MonitorState::Stopped,
+            Err(error) => {
+                entry.status.state = MonitorState::Error;
+                entry.status.last_error = Some(error);
+            }
+        }
+        entry.status
+    };
+    let _ = app.emit("desktop-monitor-status", &status);
 }
 
 async fn apply_reconnect_event(
@@ -496,10 +567,11 @@ pub async fn start_desktop_monitor(
 
 #[tauri::command]
 pub async fn stop_desktop_monitor(
+    app: AppHandle,
     supervisor: tauri::State<'_, DesktopMonitorSupervisor>,
     target_id: String,
 ) -> Result<(), String> {
-    supervisor.stop(&target_id).await
+    supervisor.stop(&app, &target_id).await
 }
 
 #[tauri::command]

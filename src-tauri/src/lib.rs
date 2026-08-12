@@ -27,7 +27,9 @@ fn installation_migrations() -> Vec<tauri_plugin_sql::Migration> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() -> tauri::Result<()> {
-    tauri::Builder::default()
+    use tauri::Manager;
+
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
@@ -39,6 +41,7 @@ pub fn run() -> tauri::Result<()> {
         .manage(install::PendingInstallStore::default())
         .manage(management::PendingUninstallStore::default())
         .manage(monitor::DesktopMonitorSupervisor::default())
+        .manage(scanner::ScanProcessSupervisor::default())
         .invoke_handler(tauri::generate_handler![
             scanner::scan_skill,
             settings::get_settings,
@@ -62,5 +65,22 @@ pub fn run() -> tauri::Result<()> {
             monitor::stop_desktop_monitor,
             monitor::list_desktop_monitors,
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())?;
+
+    app.run(|app_handle, event| match event {
+        tauri::RunEvent::WindowEvent {
+            event: tauri::WindowEvent::CloseRequested { .. },
+            ..
+        }
+        | tauri::RunEvent::ExitRequested { .. } => {
+            app_handle
+                .state::<monitor::DesktopMonitorSupervisor>()
+                .request_shutdown();
+            app_handle
+                .state::<scanner::ScanProcessSupervisor>()
+                .kill_all();
+        }
+        _ => {}
+    });
+    Ok(())
 }

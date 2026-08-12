@@ -1,13 +1,45 @@
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::settings::{ApiConfig, ApiFormat};
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 const FAST_SCAN_TIMEOUT: Duration = Duration::from_secs(30);
 const DEEP_SCAN_TIMEOUT: Duration = Duration::from_secs(180);
+
+#[derive(Default)]
+pub struct ScanProcessSupervisor(Mutex<HashMap<u32, CommandChild>>);
+
+impl ScanProcessSupervisor {
+    fn insert(&self, child: CommandChild) -> Result<u32, String> {
+        let pid = child.pid();
+        self.0
+            .lock()
+            .map_err(|_| "扫描进程管理器不可用，请重启软件。".to_string())?
+            .insert(pid, child);
+        Ok(pid)
+    }
+
+    fn remove(&self, pid: u32) -> Option<CommandChild> {
+        self.0.lock().ok()?.remove(&pid)
+    }
+
+    pub fn kill_all(&self) {
+        let children = self
+            .0
+            .lock()
+            .map(|mut children| std::mem::take(&mut *children))
+            .unwrap_or_default();
+        for child in children.into_values() {
+            let _ = child.kill();
+        }
+    }
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -147,14 +179,48 @@ pub async fn scan_directory(
     }
     let timeout = mode.timeout();
     let timeout_message = mode.timeout_message();
-    let output = tokio::time::timeout(timeout, command.output())
-        .await
-        .map_err(|_| user_error(timeout_message))?
+    let (mut events, child) = command
+        .spawn()
         .map_err(|error| user_error(format!("无法启动扫描组件：{error}")))?;
+    let pid = app.state::<ScanProcessSupervisor>().insert(child)?;
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let collect = async {
+        while let Some(event) = events.recv().await {
+            match event {
+                CommandEvent::Stdout(mut bytes) => {
+                    stdout.append(&mut bytes);
+                    stdout.push(b'\n');
+                }
+                CommandEvent::Stderr(mut bytes) => {
+                    stderr.append(&mut bytes);
+                    stderr.push(b'\n');
+                }
+                CommandEvent::Terminated(_) => return Ok::<(), String>(()),
+                CommandEvent::Error(error) => {
+                    return Err(user_error(format!("扫描组件运行失败：{error}")));
+                }
+                _ => {}
+            }
+        }
+        Err(user_error("扫描组件意外结束，未返回终止状态。"))
+    };
+    match tokio::time::timeout(timeout, collect).await {
+        Ok(result) => {
+            let _ = app.state::<ScanProcessSupervisor>().remove(pid);
+            result?;
+        }
+        Err(_) => {
+            if let Some(child) = app.state::<ScanProcessSupervisor>().remove(pid) {
+                let _ = child.kill();
+            }
+            return Err(user_error(timeout_message));
+        }
+    }
 
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|_| user_error("扫描组件返回了无法读取的结果。"))?;
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let stdout =
+        String::from_utf8(stdout).map_err(|_| user_error("扫描组件返回了无法读取的结果。"))?;
+    let stderr = String::from_utf8_lossy(&stderr).trim().to_owned();
     let report = serde_json::from_str::<ScanReport>(&stdout).map_err(|error| {
         let stdout = diagnostic_excerpt(&stdout);
         let stderr = diagnostic_excerpt(&stderr);
