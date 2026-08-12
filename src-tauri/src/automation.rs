@@ -19,6 +19,7 @@ fn target_executables(target_id: &str) -> Option<&'static [&'static str]> {
 
 #[cfg(target_os = "windows")]
 mod win {
+    use super::target_executables;
     use std::collections::HashSet;
     use std::thread;
     use std::time::Duration;
@@ -136,6 +137,59 @@ mod win {
             .ok_or_else(|| "找到了对话控件，但它当前不可见或不可输入。".to_string())
     }
 
+    pub(super) fn reconnect_attempt_from_text(text: &str) -> Option<u32> {
+        const MARKERS: &[&str] = &["正在重新连接", "reconnecting"];
+        let lower = text.to_ascii_lowercase();
+        let marker_end = MARKERS.iter().find_map(|marker| {
+            if marker.is_ascii() {
+                lower.find(marker).map(|index| index + marker.len())
+            } else {
+                text.find(marker).map(|index| index + marker.len())
+            }
+        })?;
+        let tail = &text[marker_end..];
+        let digits = tail
+            .chars()
+            .skip_while(|character| !character.is_ascii_digit())
+            .take_while(|character| character.is_ascii_digit())
+            .collect::<String>();
+        let attempt = digits.parse::<u32>().ok()?;
+        let remainder = &tail[digits.len()..];
+        remainder
+            .contains('/')
+            .then_some(attempt)
+            .filter(|attempt| *attempt > 0)
+    }
+
+    pub fn codex_visible_reconnect_attempt() -> Result<Option<u32>, String> {
+        let executables = target_executables("codex_desktop")
+            .ok_or_else(|| "Codex Desktop 目标未配置。".to_string())?;
+        let hwnd = visible_window(executables)?;
+        let automation =
+            UIAutomation::new().map_err(|error| format!("UI Automation 初始化失败：{error}"))?;
+        let root = automation
+            .element_from_handle((hwnd.0 as isize).into())
+            .map_err(|error| format!("无法读取 ChatGPT Desktop 控件：{error}"))?;
+        // ChatGPT Desktop renders the transient reconnect state as a button
+        // (`正在重新连接 1 /5`). Limiting the scan to buttons prevents prose in
+        // a conversation from being mistaken for a live reconnect indicator.
+        let candidates = automation
+            .create_matcher()
+            .from_ref(&root)
+            .control_type(ControlType::Button)
+            .depth(32)
+            .timeout(0)
+            .find_all()
+            .unwrap_or_default();
+
+        Ok(candidates.into_iter().find_map(|element| {
+            element
+                .get_name()
+                .ok()
+                .and_then(|text| reconnect_attempt_from_text(&text))
+        }))
+    }
+
     pub fn send_to_desktop(executables: &[&str], text: &str, submit: bool) -> Result<(), String> {
         if text.trim().is_empty() {
             return Err("不能注入空 Prompt。".to_string());
@@ -184,6 +238,17 @@ pub fn send_text_to_desktop(target_id: &str, text: &str, submit: bool) -> Result
     }
 }
 
+pub fn codex_visible_reconnect_attempt() -> Result<Option<u32>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        win::codex_visible_reconnect_attempt()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("桌面对话框自动化仅支持 Windows。".to_string())
+    }
+}
+
 #[tauri::command]
 pub async fn inject_text_to_agent(
     target_id: String,
@@ -211,5 +276,26 @@ mod tests {
         );
         assert!(target_executables("codex_cli").is_none());
         assert!(target_executables("claude_code").is_none());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn parses_reconnect_status_from_desktop_text() {
+        assert_eq!(
+            super::win::reconnect_attempt_from_text("正在重新连接 5/5"),
+            Some(5)
+        );
+        assert_eq!(
+            super::win::reconnect_attempt_from_text("Reconnecting 3/5"),
+            Some(3)
+        );
+        assert_eq!(
+            super::win::reconnect_attempt_from_text("正在重新连接 1 /5"),
+            Some(1)
+        );
+        assert_eq!(
+            super::win::reconnect_attempt_from_text("正在重新连接"),
+            None
+        );
     }
 }

@@ -65,7 +65,10 @@ enum ReconnectEvent {
 
 impl ReconnectTracker {
     fn observe(&mut self, line: &str) -> (ReconnectEvent, bool) {
-        let event = parse_codex_connection_event(line);
+        self.observe_event(parse_codex_connection_event(line))
+    }
+
+    fn observe_event(&mut self, event: ReconnectEvent) -> (ReconnectEvent, bool) {
         match event {
             ReconnectEvent::Attempt(attempt) => {
                 self.attempt = attempt;
@@ -239,6 +242,8 @@ async fn tail_codex_log(
         let mut tracker = ReconnectTracker::default();
         let mut line = String::new();
         let mut rotation_ticks = 0_u8;
+        let mut ui_poll_ticks = 0_u8;
+        let mut ui_status_missing_ticks = 0_u8;
 
         loop {
             tokio::select! {
@@ -263,44 +268,44 @@ async fn tail_codex_log(
                             }).await;
                         }
                     }
+                    ui_poll_ticks = ui_poll_ticks.saturating_add(1);
+                    if ui_poll_ticks >= 3 {
+                        ui_poll_ticks = 0;
+                        let visible_attempt = tauri::async_runtime::spawn_blocking(
+                            automation::codex_visible_reconnect_attempt,
+                        )
+                        .await
+                        .map_err(|error| format!("读取 ChatGPT Desktop 重连状态失败：{error}"))?;
+                        match visible_attempt {
+                            Ok(Some(attempt)) => {
+                                ui_status_missing_ticks = 0;
+                                let (event, should_recover) = tracker.observe_event(ReconnectEvent::Attempt(attempt));
+                                apply_reconnect_event(&app, &monitors, &target_id, event).await;
+                                if should_recover {
+                                    send_recovery(&app, &monitors, &target_id).await?;
+                                }
+                            }
+                            Ok(None) => {
+                                ui_status_missing_ticks = ui_status_missing_ticks.saturating_add(1);
+                                if tracker.attempt > 0 && ui_status_missing_ticks >= 3 {
+                                    let (event, _) = tracker.observe_event(ReconnectEvent::Connected);
+                                    apply_reconnect_event(&app, &monitors, &target_id, event).await;
+                                }
+                            }
+                            Err(_) => {
+                                // ChatGPT Desktop may be minimized or closing. The log monitor remains active.
+                            }
+                        }
+                    }
                     loop {
                         line.clear();
                         let read = reader.read_line(&mut line).await.map_err(|error| format!("读取 Codex Desktop 日志失败：{error}"))?;
                         if read == 0 { break; }
                         let (event, should_recover) = tracker.observe(&line);
-                        match event {
-                            ReconnectEvent::Attempt(attempt) => {
-                                update_status(&app, &monitors, &target_id, |status| {
-                                    status.state = MonitorState::Reconnecting;
-                                    status.reconnect_attempt = attempt;
-                                    status.last_error = None;
-                                }).await;
-                            }
-                            ReconnectEvent::Connected => {
-                                update_status(&app, &monitors, &target_id, |status| {
-                                    status.state = MonitorState::Watching;
-                                    status.reconnect_attempt = 0;
-                                    status.last_error = None;
-                                }).await;
-                            }
-                            ReconnectEvent::Ignore => {}
-                        }
+                        apply_reconnect_event(&app, &monitors, &target_id, event).await;
 
                         if should_recover {
-                            let target = target_id.clone();
-                            let recovery = tauri::async_runtime::spawn_blocking(move || {
-                                automation::send_text_to_desktop(&target, RECOVERY_TEXT, true)
-                            }).await.map_err(|error| format!("自动恢复任务异常结束：{error}"))?;
-                            update_status(&app, &monitors, &target_id, |status| match recovery {
-                                Ok(()) => {
-                                    status.recovery_sent_count += 1;
-                                    status.last_error = None;
-                                }
-                                Err(error) => {
-                                    status.state = MonitorState::Error;
-                                    status.last_error = Some(error);
-                                }
-                            }).await;
+                            send_recovery(&app, &monitors, &target_id).await?;
                         }
                     }
                 }
@@ -319,6 +324,58 @@ async fn tail_codex_log(
     })
     .await;
     monitors.lock().await.remove(&target_id);
+}
+
+async fn apply_reconnect_event(
+    app: &AppHandle,
+    monitors: &Arc<Mutex<HashMap<String, MonitorEntry>>>,
+    target_id: &str,
+    event: ReconnectEvent,
+) {
+    match event {
+        ReconnectEvent::Attempt(attempt) => {
+            update_status(app, monitors, target_id, |status| {
+                status.state = MonitorState::Reconnecting;
+                status.reconnect_attempt = attempt;
+                status.last_error = None;
+            })
+            .await;
+        }
+        ReconnectEvent::Connected => {
+            update_status(app, monitors, target_id, |status| {
+                status.state = MonitorState::Watching;
+                status.reconnect_attempt = 0;
+                status.last_error = None;
+            })
+            .await;
+        }
+        ReconnectEvent::Ignore => {}
+    }
+}
+
+async fn send_recovery(
+    app: &AppHandle,
+    monitors: &Arc<Mutex<HashMap<String, MonitorEntry>>>,
+    target_id: &str,
+) -> Result<(), String> {
+    let target = target_id.to_string();
+    let recovery = tauri::async_runtime::spawn_blocking(move || {
+        automation::send_text_to_desktop(&target, RECOVERY_TEXT, true)
+    })
+    .await
+    .map_err(|error| format!("自动恢复任务异常结束：{error}"))?;
+    update_status(app, monitors, target_id, |status| match recovery {
+        Ok(()) => {
+            status.recovery_sent_count += 1;
+            status.last_error = None;
+        }
+        Err(error) => {
+            status.state = MonitorState::Error;
+            status.last_error = Some(error);
+        }
+    })
+    .await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -377,5 +434,12 @@ mod tests {
         assert!(tracker.observe(&line(5)).1);
         tracker.observe("info [AppServerConnection] app_server_connection.state_changed next=connected reconnectAttempt=0");
         assert!(tracker.observe(&line(5)).1);
+    }
+
+    #[test]
+    fn desktop_ui_attempt_uses_the_same_single_recovery_guard() {
+        let mut tracker = ReconnectTracker::default();
+        assert!(tracker.observe_event(ReconnectEvent::Attempt(5)).1);
+        assert!(!tracker.observe_event(ReconnectEvent::Attempt(5)).1);
     }
 }
