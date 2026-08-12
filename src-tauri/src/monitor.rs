@@ -57,6 +57,10 @@ struct ReconnectTracker {
     pending_recovery: bool,
     awaiting_recovery_turn: bool,
     recovery_turn_deadline: Option<Instant>,
+    running_seen: bool,
+    terminal_failure_baseline: Option<bool>,
+    terminal_failure_observed: bool,
+    terminal_failure_handled: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -125,16 +129,34 @@ impl ReconnectTracker {
             CodexDesktopActivity::Reconnecting(attempt) => {
                 self.observe_event(ReconnectEvent::Attempt(attempt))
             }
-            CodexDesktopActivity::Running => {
+            CodexDesktopActivity::Running {
+                terminal_failure_visible,
+            } => {
                 if self.awaiting_recovery_turn {
                     self.rearm_for_next_turn();
                 }
+                if self.terminal_failure_baseline.is_none() {
+                    self.terminal_failure_baseline = Some(terminal_failure_visible);
+                } else if terminal_failure_visible && self.terminal_failure_baseline == Some(false)
+                {
+                    self.terminal_failure_observed = true;
+                }
+                self.running_seen = true;
                 (ReconnectEvent::NewTurn, false)
             }
-            CodexDesktopActivity::Idle => {
-                let should_recover = self.pending_recovery && !self.awaiting_recovery_turn;
+            CodexDesktopActivity::Idle {
+                terminal_failure_visible,
+            } => {
+                let new_terminal_failure = self.running_seen
+                    && terminal_failure_visible
+                    && (self.terminal_failure_observed
+                        || self.terminal_failure_baseline == Some(false))
+                    && !self.terminal_failure_handled;
+                let should_recover =
+                    (self.pending_recovery || new_terminal_failure) && !self.awaiting_recovery_turn;
                 if should_recover {
                     self.pending_recovery = false;
+                    self.terminal_failure_handled = true;
                 }
                 (ReconnectEvent::Connected, should_recover)
             }
@@ -148,6 +170,10 @@ impl ReconnectTracker {
         self.pending_recovery = false;
         self.awaiting_recovery_turn = false;
         self.recovery_turn_deadline = None;
+        self.running_seen = false;
+        self.terminal_failure_baseline = None;
+        self.terminal_failure_observed = false;
+        self.terminal_failure_handled = false;
     }
 }
 
@@ -495,6 +521,18 @@ mod tests {
         format!("info [AppServerConnection] app_server_connection.state_changed next=connecting reconnectAttempt={attempt}")
     }
 
+    fn running(terminal_failure_visible: bool) -> CodexDesktopActivity {
+        CodexDesktopActivity::Running {
+            terminal_failure_visible,
+        }
+    }
+
+    fn idle(terminal_failure_visible: bool) -> CodexDesktopActivity {
+        CodexDesktopActivity::Idle {
+            terminal_failure_visible,
+        }
+    }
+
     #[test]
     fn ignores_unrelated_retry_text() {
         assert_eq!(
@@ -511,8 +549,23 @@ mod tests {
         }
         assert!(!tracker.observe(&line(5)).1);
         assert!(!tracker.observe(&line(5)).1);
-        assert!(tracker.observe_activity(CodexDesktopActivity::Idle).1);
-        assert!(!tracker.observe_activity(CodexDesktopActivity::Idle).1);
+        tracker.observe_activity(CodexDesktopActivity::Running {
+            terminal_failure_visible: false,
+        });
+        assert!(
+            tracker
+                .observe_activity(CodexDesktopActivity::Idle {
+                    terminal_failure_visible: false
+                })
+                .1
+        );
+        assert!(
+            !tracker
+                .observe_activity(CodexDesktopActivity::Idle {
+                    terminal_failure_visible: false
+                })
+                .1
+        );
     }
 
     #[test]
@@ -521,7 +574,16 @@ mod tests {
         tracker.observe(&line(5));
         tracker.observe_event(ReconnectEvent::Connected);
         tracker.observe(&line(5));
-        assert!(tracker.observe_activity(CodexDesktopActivity::Idle).1);
+        tracker.observe_activity(CodexDesktopActivity::Running {
+            terminal_failure_visible: false,
+        });
+        assert!(
+            tracker
+                .observe_activity(CodexDesktopActivity::Idle {
+                    terminal_failure_visible: false
+                })
+                .1
+        );
     }
 
     #[test]
@@ -529,7 +591,16 @@ mod tests {
         let mut tracker = ReconnectTracker::default();
         tracker.observe_event(ReconnectEvent::Attempt(5));
         tracker.observe_event(ReconnectEvent::Connected);
-        assert!(tracker.observe_activity(CodexDesktopActivity::Idle).1);
+        tracker.observe_activity(CodexDesktopActivity::Running {
+            terminal_failure_visible: false,
+        });
+        assert!(
+            tracker
+                .observe_activity(CodexDesktopActivity::Idle {
+                    terminal_failure_visible: false
+                })
+                .1
+        );
     }
 
     #[test]
@@ -537,7 +608,16 @@ mod tests {
         let mut tracker = ReconnectTracker::default();
         assert!(!tracker.observe_event(ReconnectEvent::Attempt(5)).1);
         assert!(!tracker.observe_event(ReconnectEvent::Attempt(5)).1);
-        assert!(tracker.observe_activity(CodexDesktopActivity::Idle).1);
+        tracker.observe_activity(CodexDesktopActivity::Running {
+            terminal_failure_visible: false,
+        });
+        assert!(
+            tracker
+                .observe_activity(CodexDesktopActivity::Idle {
+                    terminal_failure_visible: false
+                })
+                .1
+        );
     }
 
     #[test]
@@ -545,7 +625,16 @@ mod tests {
         let mut tracker = ReconnectTracker::default();
         let start = Instant::now();
         tracker.observe_event(ReconnectEvent::Attempt(5));
-        assert!(tracker.observe_activity(CodexDesktopActivity::Idle).1);
+        tracker.observe_activity(CodexDesktopActivity::Running {
+            terminal_failure_visible: false,
+        });
+        assert!(
+            tracker
+                .observe_activity(CodexDesktopActivity::Idle {
+                    terminal_failure_visible: false
+                })
+                .1
+        );
         tracker.mark_recovery_sent();
         assert_eq!(
             tracker
@@ -554,7 +643,16 @@ mod tests {
             ReconnectEvent::NewTurn
         );
         tracker.observe_event(ReconnectEvent::Attempt(5));
-        assert!(tracker.observe_activity(CodexDesktopActivity::Idle).1);
+        tracker.observe_activity(CodexDesktopActivity::Running {
+            terminal_failure_visible: false,
+        });
+        assert!(
+            tracker
+                .observe_activity(CodexDesktopActivity::Idle {
+                    terminal_failure_visible: false
+                })
+                .1
+        );
     }
 
     #[test]
@@ -562,7 +660,16 @@ mod tests {
         let mut tracker = ReconnectTracker::default();
         let start = Instant::now();
         tracker.observe_event(ReconnectEvent::Attempt(5));
-        assert!(tracker.observe_activity(CodexDesktopActivity::Idle).1);
+        tracker.observe_activity(CodexDesktopActivity::Running {
+            terminal_failure_visible: false,
+        });
+        assert!(
+            tracker
+                .observe_activity(CodexDesktopActivity::Idle {
+                    terminal_failure_visible: false
+                })
+                .1
+        );
         tracker.mark_recovery_sent();
         assert_eq!(
             tracker.observe_event_at(ReconnectEvent::NewTurn, start).0,
@@ -579,30 +686,83 @@ mod tests {
             tracker.observe_event(ReconnectEvent::NewTurn).0,
             ReconnectEvent::Ignore
         );
-        assert!(tracker.observe_activity(CodexDesktopActivity::Idle).1);
+        tracker.observe_activity(CodexDesktopActivity::Running {
+            terminal_failure_visible: false,
+        });
+        assert!(
+            tracker
+                .observe_activity(CodexDesktopActivity::Idle {
+                    terminal_failure_visible: false
+                })
+                .1
+        );
     }
 
     #[test]
     fn running_then_idle_rearms_same_conversation_for_second_recovery() {
         let mut tracker = ReconnectTracker::default();
         tracker.observe_event(ReconnectEvent::Attempt(5));
-        assert!(tracker.observe_activity(CodexDesktopActivity::Idle).1);
+        tracker.observe_activity(CodexDesktopActivity::Running {
+            terminal_failure_visible: false,
+        });
+        assert!(
+            tracker
+                .observe_activity(CodexDesktopActivity::Idle {
+                    terminal_failure_visible: false
+                })
+                .1
+        );
         tracker.mark_recovery_sent();
 
-        assert!(!tracker.observe_activity(CodexDesktopActivity::Running).1);
+        assert!(!tracker.observe_activity(running(false)).1);
         tracker.observe_event(ReconnectEvent::Attempt(5));
-        assert!(tracker.observe_activity(CodexDesktopActivity::Idle).1);
+        assert!(tracker.observe_activity(idle(false)).1);
     }
 
     #[test]
     fn lower_reconnect_attempt_rearms_when_running_state_was_missed() {
         let mut tracker = ReconnectTracker::default();
         tracker.observe_event(ReconnectEvent::Attempt(5));
-        assert!(tracker.observe_activity(CodexDesktopActivity::Idle).1);
+        tracker.observe_activity(running(false));
+        assert!(tracker.observe_activity(idle(false)).1);
         tracker.mark_recovery_sent();
 
         tracker.observe_event(ReconnectEvent::Attempt(1));
         tracker.observe_event(ReconnectEvent::Attempt(5));
-        assert!(tracker.observe_activity(CodexDesktopActivity::Idle).1);
+        assert!(tracker.observe_activity(idle(false)).1);
+    }
+
+    #[test]
+    fn new_terminal_failure_after_running_triggers_recovery_once() {
+        let mut tracker = ReconnectTracker::default();
+        assert!(!tracker.observe_activity(running(false)).1);
+        assert!(tracker.observe_activity(idle(true)).1);
+        assert!(!tracker.observe_activity(idle(true)).1);
+    }
+
+    #[test]
+    fn terminal_failure_that_appears_while_still_running_triggers_on_idle() {
+        let mut tracker = ReconnectTracker::default();
+        assert!(!tracker.observe_activity(running(false)).1);
+        assert!(!tracker.observe_activity(running(true)).1);
+        assert!(tracker.observe_activity(idle(true)).1);
+    }
+
+    #[test]
+    fn historical_terminal_failure_does_not_trigger_recovery() {
+        let mut tracker = ReconnectTracker::default();
+        assert!(!tracker.observe_activity(running(true)).1);
+        assert!(!tracker.observe_activity(idle(true)).1);
+    }
+
+    #[test]
+    fn terminal_failure_rearms_for_the_next_same_conversation_turn() {
+        let mut tracker = ReconnectTracker::default();
+        tracker.observe_activity(running(false));
+        assert!(tracker.observe_activity(idle(true)).1);
+        tracker.mark_recovery_sent();
+
+        assert!(!tracker.observe_activity(running(false)).1);
+        assert!(tracker.observe_activity(idle(true)).1);
     }
 }

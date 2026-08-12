@@ -45,7 +45,7 @@ async function refreshInstalled() {
 }
 
 async function convert() {
-  if (!requirement.value.trim() || !store.skills.length) {
+  if (!requirement.value.trim()) {
     conversion.value = null;
     return;
   }
@@ -76,6 +76,12 @@ watch([requirement, () => installed.value, () => store.skills], () => {
 const selectedIds = computed(() => new Set(conversion.value?.selected.map((skill) => skill.id) ?? []));
 const selectableInstalled = computed(() => installed.value.filter((skill) => !selectedIds.value.has(skill.id)));
 const canAddSkill = computed(() => selectedIds.value.size < 5);
+const actionHint = computed(() => {
+  if (!requirement.value.trim()) return "输入需求后即可生成和精炼 Prompt";
+  if (loading.value) return "正在生成模板 Prompt";
+  if (!conversion.value) return "模板尚未生成，请稍候或点击 LLM 精炼重试";
+  return "模板 Prompt 已就绪";
+});
 
 function ensureManualSelection() {
   if (manualSelectedIds.value === null) manualSelectedIds.value = conversion.value?.selected.map((skill) => skill.id) ?? [];
@@ -137,9 +143,11 @@ async function updateAutoInject(value: boolean) {
 }
 
 async function refinePrompt() {
-  if (!conversion.value || refining.value || injecting.value) return;
+  if (!requirement.value.trim() || refining.value || injecting.value) return;
   refining.value = true; error.value = null;
   try {
+    if (!conversion.value) await convert();
+    if (!conversion.value) throw new Error("模板 Prompt 生成失败，请检查上方错误后重试。");
     const prompt = await invoke<string>("refine_prompt", { request: { requirement: requirement.value, templatePrompt: conversion.value.prompt } });
     conversion.value = { ...conversion.value, prompt };
     if (autoInjectAfterRefine.value) await injectPrompt(prompt);
@@ -258,9 +266,9 @@ onMounted(async () => {
 
       <section class="surface overflow-hidden lg:sticky lg:top-[68px]">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 px-5 py-3.5">
-          <div><h2 class="section-title">实时预览</h2><p class="mt-1 text-[11px] text-stone-500">{{ loading ? '正在匹配 Skill' : conversion ? '已生成' : '等待输入' }}</p></div>
+          <div><h2 class="section-title">实时预览</h2><p class="mt-1 text-[11px] text-stone-500">{{ actionHint }}</p></div>
           <div class="flex flex-wrap gap-2">
-            <button type="button" class="button-secondary" :disabled="!conversion || refining || injecting" @click="refinePrompt"><LoaderCircle v-if="refining" class="size-4 animate-spin" /><Wand2 v-else class="size-4" />{{ autoInjectAfterRefine ? '精炼并填入' : 'LLM 精炼' }}</button>
+            <button type="button" class="button-secondary" :disabled="!requirement.trim() || refining || injecting" :title="!requirement.trim() ? '请先输入需求' : '使用设置页中配置的模型精炼 Prompt'" @click="refinePrompt"><LoaderCircle v-if="refining" class="size-4 animate-spin" /><Wand2 v-else class="size-4" />{{ autoInjectAfterRefine ? '精炼并填入' : 'LLM 精炼' }}</button>
             <button type="button" class="button-secondary" :disabled="!conversion" @click="copyPrompt"><Check v-if="copied" class="size-4 text-emerald-600" /><Clipboard v-else class="size-4" />{{ copied ? '已复制' : '复制' }}</button>
             <div class="flex items-center gap-1">
               <select v-model="injectTarget" class="select-field h-8 text-[11px]" :disabled="!conversion || injecting">

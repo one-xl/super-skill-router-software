@@ -131,4 +131,20 @@ mod tests {
         assert_eq!(result.selected[0].skill.id, "first");
         assert_eq!(result.selected[1].skill.id, "second");
     }
+
+    #[test]
+    fn converts_without_an_index_or_installed_skills() {
+        let result = convert_requirement(ConversionRequest {
+            requirement: "修复设置页面白屏并补充验证".into(),
+            installed: Vec::new(),
+            index: Vec::new(),
+            selected_ids: None,
+        })
+        .expect("conversion should not depend on the skill index");
+
+        assert!(result.prompt.contains("修复设置页面白屏并补充验证"));
+        assert!(result.prompt.contains("未检测到相关且已安装的 skill"));
+        assert!(result.selected.is_empty());
+        assert!(result.gaps.is_empty());
+    }
 }

@@ -14,8 +14,8 @@ const DESKTOP_TARGETS: &[(&str, &[&str])] = &[
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CodexDesktopActivity {
     Reconnecting(u32),
-    Running,
-    Idle,
+    Running { terminal_failure_visible: bool },
+    Idle { terminal_failure_visible: bool },
     Unknown,
 }
 
@@ -181,7 +181,7 @@ mod win {
         // ChatGPT Desktop renders the transient reconnect state as a button
         // (`正在重新连接 1 /5`). Limiting the scan to buttons prevents prose in
         // a conversation from being mistaken for a live reconnect indicator.
-        let candidates = automation
+        let buttons = automation
             .create_matcher()
             .from_ref(&root)
             .control_type(ControlType::Button)
@@ -190,7 +190,7 @@ mod win {
             .find_all()
             .unwrap_or_default();
 
-        let names = candidates
+        let names = buttons
             .into_iter()
             .filter_map(|element| element.get_name().ok())
             .collect::<Vec<_>>();
@@ -200,13 +200,67 @@ mod win {
         {
             return Ok(CodexDesktopActivity::Reconnecting(attempt));
         }
+        let terminal_failure_visible = terminal_failure_near_composer(&automation, &root);
         if names.iter().any(|name| is_stop_button(name)) {
-            return Ok(CodexDesktopActivity::Running);
+            return Ok(CodexDesktopActivity::Running {
+                terminal_failure_visible,
+            });
         }
         if names.iter().any(|name| is_send_button(name)) {
-            return Ok(CodexDesktopActivity::Idle);
+            return Ok(CodexDesktopActivity::Idle {
+                terminal_failure_visible,
+            });
         }
         Ok(CodexDesktopActivity::Unknown)
+    }
+
+    fn terminal_failure_near_composer(automation: &UIAutomation, root: &UIElement) -> bool {
+        let Ok(composer_rect) = composer(root).and_then(|element| {
+            element
+                .get_bounding_rectangle()
+                .map_err(|error| format!("无法读取输入框位置：{error}"))
+        }) else {
+            return false;
+        };
+        let candidates = automation
+            .create_matcher()
+            .from_ref(root)
+            .control_type(ControlType::Text)
+            .depth(32)
+            .timeout(0)
+            .find_all()
+            .unwrap_or_default();
+
+        candidates.into_iter().any(|element| {
+            let Ok(name) = element.get_name() else {
+                return false;
+            };
+            if !is_terminal_failure_text(&name) {
+                return false;
+            }
+            let Ok(rect) = element.get_bounding_rectangle() else {
+                return false;
+            };
+            let vertical_gap = composer_rect.get_top() - rect.get_bottom();
+            let center_x = (rect.get_left() + rect.get_right()) / 2;
+            (0..=180).contains(&vertical_gap)
+                && center_x >= composer_rect.get_left()
+                && center_x <= composer_rect.get_right()
+        })
+    }
+
+    pub(super) fn is_terminal_failure_text(text: &str) -> bool {
+        const MARKERS: &[&str] = &[
+            "exceeded retry limit",
+            "too many requests",
+            "rate limit exceeded",
+            "retry limit exceeded",
+            "已超过重试次数",
+            "超过重试限制",
+            "请求过多",
+        ];
+        let lower = text.to_ascii_lowercase();
+        MARKERS.iter().any(|marker| lower.contains(marker))
     }
 
     fn normalized_button_name(name: &str) -> String {
@@ -344,5 +398,17 @@ mod tests {
         assert!(super::win::is_send_button("发送"));
         assert!(super::win::is_send_button("Send message"));
         assert!(!super::win::is_send_button("跳转到用户消息 2"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn recognizes_terminal_retry_failures() {
+        assert!(super::win::is_terminal_failure_text(
+            "exceeded retry limit, last status: 429 Too Many Requests"
+        ));
+        assert!(super::win::is_terminal_failure_text(
+            "请求过多，已超过重试次数"
+        ));
+        assert!(!super::win::is_terminal_failure_text("正在重新连接 3/5"));
     }
 }

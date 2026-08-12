@@ -131,7 +131,7 @@ onMounted(async () => {
           <label class="flex cursor-pointer items-start justify-between gap-5 py-4">
             <span>
               <span class="block text-[13px] font-medium text-stone-800">启动软件时监控 ChatGPT Desktop（Codex）重连</span>
-              <span class="mt-1 block text-[11px] leading-5 text-stone-500">仅在桌面显示第 5 次重连且任务回到空闲发送键后，自动输入并发送恢复内容；同一对话可重复触发。</span>
+              <span class="mt-1 block text-[11px] leading-5 text-stone-500">第 5 次重连或本轮新出现重试耗尽/429 错误，且任务回到空闲发送键后自动发送；同一对话可重复触发。</span>
             </span>
             <input v-model="settings.automation.startCodexRecoveryMonitorOnLaunch" type="checkbox" class="mt-0.5 size-4 shrink-0 accent-teal-700" />
           </label>
