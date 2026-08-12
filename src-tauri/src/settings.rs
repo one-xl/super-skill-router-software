@@ -87,9 +87,13 @@ pub fn load(app: &AppHandle) -> Result<AppSettings, String> {
     if !path.is_file() {
         return Ok(AppSettings::default());
     }
+    let bytes = fs::read(&path).map_err(|error| format!("无法读取设置：{error}"))?;
+    if bytes.iter().all(u8::is_ascii_whitespace) {
+        return Ok(AppSettings::default());
+    }
+    let json = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
     let mut settings: AppSettings =
-        serde_json::from_slice(&fs::read(&path).map_err(|error| format!("无法读取设置：{error}"))?)
-            .map_err(|error| format!("设置格式无效：{error}"))?;
+        serde_json::from_slice(json).map_err(|error| format!("设置格式无效：{error}"))?;
 
     // Migrate keys saved by versions before Credential Manager support.
     let had_legacy_secret = !settings.deep_scan.api_key.is_empty()
@@ -210,6 +214,18 @@ mod tests {
 
         assert!(!settings.automation.auto_inject_after_refine);
         assert!(!settings.automation.start_codex_recovery_monitor_on_launch);
+        assert_eq!(settings.automation.recovery_text, DEFAULT_RECOVERY_TEXT);
+    }
+
+    #[test]
+    fn settings_parser_accepts_a_utf8_bom() {
+        let bytes = [
+            b"\xEF\xBB\xBF".as_slice(),
+            br#"{"deepScan":{"format":"openai","apiUrl":"","model":""},"prompt":{"format":"openai","apiUrl":"","model":""}}"#,
+        ]
+        .concat();
+        let json = bytes.strip_prefix(b"\xEF\xBB\xBF").expect("strip BOM");
+        let settings: AppSettings = serde_json::from_slice(json).expect("parse settings");
         assert_eq!(settings.automation.recovery_text, DEFAULT_RECOVERY_TEXT);
     }
 
