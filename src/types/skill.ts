@@ -78,7 +78,16 @@ export interface PreparedInstall {
 export type ApiFormat = "openai" | "anthropic";
 export interface ApiConfig { format: ApiFormat; apiUrl: string; apiKey: string; model: string; apiKeyConfigured?: boolean; }
 export interface SkillsMpConfig { apiKey: string; apiKeyConfigured?: boolean; }
-export interface AppSettings { deepScan: ApiConfig; prompt: ApiConfig; skillsMp: SkillsMpConfig; }
+export interface AutomationConfig {
+  autoInjectAfterRefine: boolean;
+  startCodexRecoveryMonitorOnLaunch: boolean;
+}
+export interface AppSettings {
+  deepScan: ApiConfig;
+  prompt: ApiConfig;
+  skillsMp: SkillsMpConfig;
+  automation: AutomationConfig;
+}
 
 export interface InstallOutcome {
   kind: "installed" | "packaged_for_upload";
@@ -143,3 +152,19 @@ export interface InstallationRecord {
 
 export interface TargetSkillInventory { id: TargetId; name: string; skills: Array<{ directory_name: string; path: string }>; error: string | null; }
 export interface PreparedUninstall { token: string; staged_targets: TargetId[]; }
+
+// ---------------------------------------------------------------------------
+// Desktop Agent reconnect monitoring
+// ---------------------------------------------------------------------------
+
+export type DesktopMonitorState = "watching" | "reconnecting" | "stopped" | "error";
+
+export interface DesktopMonitorStatus {
+  target_id: "codex_desktop" | "claude_code_desktop";
+  target_label: string;
+  state: DesktopMonitorState;
+  reconnect_attempt: number;
+  recovery_sent_count: number;
+  last_error: string | null;
+  log_path: string | null;
+}

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { Check, Clipboard, Download, LoaderCircle, Plus, ShieldAlert, Sparkles, Wand2, X } from "@lucide/vue";
+import { Check, Clipboard, Download, LoaderCircle, LogIn, Plus, ShieldAlert, Sparkles, Wand2, X } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
 import { loadInstalledRecords, recordInstallations } from "../lib/database";
 import { useSkillIndexStore } from "../stores";
-import type { BatchInstallReport, ConversionResult, ConverterSkill, PreparedInstall, ScanReport, Skill, TargetDetection, TargetId } from "../types/skill";
+import type { AppSettings, BatchInstallReport, ConversionResult, ConverterSkill, PreparedInstall, ScanReport, Skill, TargetDetection, TargetId } from "../types/skill";
 
 const store = useSkillIndexStore();
 const requirement = ref("");
@@ -13,6 +13,9 @@ const conversion = ref<ConversionResult | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const copied = ref(false);
+const injecting = ref(false);
+const injectTarget = ref("codex_desktop");
+const autoInjectAfterRefine = ref(false);
 const refining = ref(false);
 const manualSelectedIds = ref<string[] | null>(null);
 const addSkillId = ref("");
@@ -98,10 +101,37 @@ async function copyPrompt() {
     error.value = `无法复制 prompt：${fail(cause)}`;
   }
 }
+
+async function injectPrompt(prompt: string) {
+  injecting.value = true;
+  error.value = null;
+  try {
+    await invoke("inject_text_to_agent", {
+      targetId: injectTarget.value,
+      text: prompt,
+      submit: false,
+    });
+  } catch (cause) {
+    error.value = `填入失败：${fail(cause)}`;
+    throw cause;
+  } finally {
+    injecting.value = false;
+  }
+}
+
+async function injectToAgent() {
+  if (!conversion.value || injecting.value) return;
+  try { await injectPrompt(conversion.value.prompt); } catch { /* Error is displayed above. */ }
+}
+
 async function refinePrompt() {
-  if (!conversion.value || refining.value) return;
+  if (!conversion.value || refining.value || injecting.value) return;
   refining.value = true; error.value = null;
-  try { conversion.value = { ...conversion.value, prompt: await invoke<string>("refine_prompt", { request: { requirement: requirement.value, templatePrompt: conversion.value.prompt } }) }; }
+  try {
+    const prompt = await invoke<string>("refine_prompt", { request: { requirement: requirement.value, templatePrompt: conversion.value.prompt } });
+    conversion.value = { ...conversion.value, prompt };
+    if (autoInjectAfterRefine.value) await injectPrompt(prompt);
+  }
   catch (cause) { error.value = fail(cause); } finally { refining.value = false; }
 }
 
@@ -156,6 +186,12 @@ async function installGap() {
 }
 
 onMounted(async () => {
+  try {
+    const settings = await invoke<AppSettings>("get_settings");
+    autoInjectAfterRefine.value = settings.automation.autoInjectAfterRefine;
+  } catch (cause) {
+    error.value = `无法读取自动化设置：${fail(cause)}`;
+  }
   if (!store.index) await store.load();
   try { await refreshInstalled(); } catch (cause) { error.value = `无法读取本机安装记录：${fail(cause)}`; }
 });
@@ -214,7 +250,20 @@ onMounted(async () => {
       <section class="surface overflow-hidden lg:sticky lg:top-[68px]">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 px-5 py-3.5">
           <div><h2 class="section-title">实时预览</h2><p class="mt-1 text-[11px] text-stone-500">{{ loading ? '正在匹配 Skill' : conversion ? '已生成' : '等待输入' }}</p></div>
-          <div class="flex gap-2"><button type="button" class="button-secondary" :disabled="!conversion || refining" @click="refinePrompt"><LoaderCircle v-if="refining" class="size-4 animate-spin" /><Wand2 v-else class="size-4" />LLM 精炼</button><button type="button" class="button-secondary" :disabled="!conversion" @click="copyPrompt"><Check v-if="copied" class="size-4 text-emerald-600" /><Clipboard v-else class="size-4" />{{ copied ? '已复制' : '复制' }}</button></div>
+          <div class="flex flex-wrap gap-2">
+            <button type="button" class="button-secondary" :disabled="!conversion || refining || injecting" @click="refinePrompt"><LoaderCircle v-if="refining" class="size-4 animate-spin" /><Wand2 v-else class="size-4" />{{ autoInjectAfterRefine ? '精炼并填入' : 'LLM 精炼' }}</button>
+            <button type="button" class="button-secondary" :disabled="!conversion" @click="copyPrompt"><Check v-if="copied" class="size-4 text-emerald-600" /><Clipboard v-else class="size-4" />{{ copied ? '已复制' : '复制' }}</button>
+            <div class="flex items-center gap-1">
+              <select v-model="injectTarget" class="select-field h-8 text-[11px]" :disabled="!conversion || injecting">
+                <option value="codex_desktop">Codex Desktop</option>
+                <option value="claude_code_desktop">Claude Code Desktop</option>
+              </select>
+              <button type="button" class="button-primary h-8 px-3" :disabled="!conversion || injecting || refining" title="填入桌面 Agent 对话框，不自动发送" @click="injectToAgent">
+                <LoaderCircle v-if="injecting" class="size-4 animate-spin" /><LogIn v-else class="size-4" />填入
+              </button>
+            </div>
+            <label class="inline-flex h-8 items-center gap-1.5 text-[10px] text-stone-500"><input v-model="autoInjectAfterRefine" type="checkbox" />精炼后自动填入</label>
+          </div>
         </div>
         <pre class="min-h-[34rem] whitespace-pre-wrap bg-stone-950 p-5 font-mono text-[12px] leading-6 text-stone-200">{{ loading ? '正在匹配已安装 skill...' : conversion?.prompt || '输入需求后将在此生成结构化 prompt。' }}</pre>
       </section>

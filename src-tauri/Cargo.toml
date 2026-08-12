@@ -25,11 +25,21 @@ tauri-plugin-shell = "2"
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["time", "macros", "rt"] }
+tokio = { version = "1", features = ["time", "macros", "rt", "process", "io-util", "sync", "fs"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 uuid = { version = "1", features = ["v4"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 keyring = { version = "3.6", features = ["windows-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+uiautomation = { version = "0.25", features = ["clipboard", "process"] }
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_ToolHelp",
+] }
 
 [dev-dependencies]
 tempfile = "3"

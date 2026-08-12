@@ -6,6 +6,7 @@ import {
   ExternalLink,
   KeyRound,
   LibraryBig,
+  MonitorDot,
   Search,
   Settings,
   X,
@@ -17,10 +18,11 @@ import Discover from "./views/Discover.vue";
 import Compose from "./views/Compose.vue";
 import Manage from "./views/Manage.vue";
 import LocalIndex from "./views/LocalIndex.vue";
+import MonitorView from "./views/Monitor.vue";
 import SettingsView from "./views/Settings.vue";
 import type { AppSettings } from "./types/skill";
 
-type ViewId = "discover" | "compose" | "manage" | "settings" | "index";
+type ViewId = "discover" | "compose" | "manage" | "settings" | "index" | "monitor";
 
 const SETUP_DISMISSED_KEY = "super-skill-router:skillsmp-setup-dismissed";
 const SKILLSMP_DOCS_URL = "https://skillsmp.com/zh/docs/api";
@@ -39,17 +41,32 @@ const activeLabel = computed(() => {
     compose: "需求转 Prompt",
     manage: "Skill 管理",
     index: "本地索引",
+    monitor: "Agent 监控",
     settings: "设置",
   };
   return labels[view.value];
 });
 
-async function checkFirstRunSetup() {
+async function initializeApp() {
   try {
     const settings = await invoke<AppSettings>("get_settings");
     showSkillsMpSetup.value = !settings.skillsMp.apiKeyConfigured && localStorage.getItem(SETUP_DISMISSED_KEY) !== "1";
+    if (settings.automation.startCodexRecoveryMonitorOnLaunch) {
+      await startDesktopRecoveryMonitor();
+    }
   } catch {
     // The settings page presents the concrete error if configuration cannot be read.
+  }
+}
+
+async function startDesktopRecoveryMonitor() {
+  try {
+    const monitors = await invoke<Array<{ target_id: string }>>("list_desktop_monitors");
+    if (!monitors.some((monitor) => monitor.target_id === "codex_desktop")) {
+      await invoke("start_desktop_monitor", { targetId: "codex_desktop" });
+    }
+  } catch {
+    // The monitor view exposes log discovery and desktop automation errors.
   }
 }
 
@@ -67,7 +84,9 @@ async function openSkillsMpDocs() {
   await openUrl(SKILLSMP_DOCS_URL);
 }
 
-onMounted(() => { void checkFirstRunSetup(); });
+onMounted(() => {
+  void initializeApp();
+});
 </script>
 
 <template>
@@ -113,6 +132,19 @@ onMounted(() => { void checkFirstRunSetup(); });
             <span class="nav-hint">离线数据源</span>
           </span>
         </button>
+        <button
+          type="button"
+          class="nav-item"
+          :class="view === 'monitor' && 'nav-item-active'"
+          :aria-current="view === 'monitor' ? 'page' : undefined"
+          @click="view = 'monitor'"
+        >
+          <MonitorDot class="nav-icon" :stroke-width="1.8" />
+          <span class="min-w-0 flex-1">
+            <span class="nav-title">监控</span>
+            <span class="nav-hint">重连自动恢复</span>
+          </span>
+        </button>
       </nav>
 
       <div class="sidebar-footer">
@@ -143,6 +175,7 @@ onMounted(() => { void checkFirstRunSetup(); });
           <Compose v-else-if="view === 'compose'" key="compose" />
           <Manage v-else-if="view === 'manage'" key="manage" />
           <LocalIndex v-else-if="view === 'index'" key="index" />
+          <MonitorView v-else-if="view === 'monitor'" key="monitor" />
           <SettingsView v-else key="settings" />
         </Transition>
       </main>

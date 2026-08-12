@@ -1,13 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { Check, CircleAlert, CircleCheck, ExternalLink, KeyRound, LoaderCircle, Save, Settings2 } from "@lucide/vue";
+import { Bot, Check, CircleAlert, CircleCheck, ExternalLink, KeyRound, LoaderCircle, Save, Settings2 } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ApiConfig, AppSettings } from "../types/skill";
 
 const SKILLSMP_DOCS_URL = "https://skillsmp.com/zh/docs/api";
 const empty = (): ApiConfig => ({ format: "openai", apiUrl: "", apiKey: "", model: "", apiKeyConfigured: false });
-const settings = ref<AppSettings>({ deepScan: empty(), prompt: empty(), skillsMp: { apiKey: "", apiKeyConfigured: false } });
+const settings = ref<AppSettings>({
+  deepScan: empty(),
+  prompt: empty(),
+  skillsMp: { apiKey: "", apiKeyConfigured: false },
+  automation: { autoInjectAfterRefine: false, startCodexRecoveryMonitorOnLaunch: false },
+});
 const loading = ref(true);
 const saving = ref(false);
 const saved = ref(false);
@@ -115,6 +120,29 @@ onMounted(() => { void load(); });
         </div>
         <label class="field-label mt-5">SkillsMP API Key <span v-if="settings.skillsMp.apiKeyConfigured" class="ml-1 text-[11px] font-normal text-emerald-700">已安全保存，留空则保持不变</span><input v-model="settings.skillsMp.apiKey" type="password" class="field mt-1.5" autocomplete="off" placeholder="输入 SkillsMP API Key" /></label>
         <button type="button" class="button-secondary mt-3" @click="openSkillsMpDocs"><ExternalLink class="size-4" />获取 SkillsMP API Key</button>
+      </section>
+
+      <section class="surface p-5">
+        <div>
+          <h2 class="section-title flex items-center gap-2"><Bot class="size-4 text-teal-700" />桌面 Agent 自动化</h2>
+          <p class="mt-1.5 text-[12px] text-stone-500">自动行为默认关闭，可单独启用；手动填入和手动开始监控始终可用。</p>
+        </div>
+        <div class="mt-5 divide-y divide-stone-200 border-y border-stone-200">
+          <label class="flex cursor-pointer items-start justify-between gap-5 py-4">
+            <span>
+              <span class="block text-[13px] font-medium text-stone-800">LLM 精炼后自动填入桌面 Agent</span>
+              <span class="mt-1 block text-[11px] leading-5 text-stone-500">将精炼结果填入所选 Codex Desktop 或 Claude Code Desktop 对话框，但不会自动发送。</span>
+            </span>
+            <input v-model="settings.automation.autoInjectAfterRefine" type="checkbox" class="mt-0.5 size-4 shrink-0 accent-teal-700" />
+          </label>
+          <label class="flex cursor-pointer items-start justify-between gap-5 py-4">
+            <span>
+              <span class="block text-[13px] font-medium text-stone-800">启动软件时监控 Codex Desktop 重连</span>
+              <span class="mt-1 block text-[11px] leading-5 text-stone-500">仅在 Codex 日志确认第 5 次重连失败后，自动输入并发送“继续并恢复todo-list”。</span>
+            </span>
+            <input v-model="settings.automation.startCodexRecoveryMonitorOnLaunch" type="checkbox" class="mt-0.5 size-4 shrink-0 accent-teal-700" />
+          </label>
+        </div>
       </section>
     </div>
   </section>

@@ -1,7 +1,9 @@
+mod automation;
 mod converter;
 mod fetcher;
 mod install;
 mod management;
+mod monitor;
 mod packager;
 mod scanner;
 mod settings;
@@ -36,6 +38,7 @@ pub fn run() -> tauri::Result<()> {
         )
         .manage(install::PendingInstallStore::default())
         .manage(management::PendingUninstallStore::default())
+        .manage(monitor::DesktopMonitorSupervisor::default())
         .invoke_handler(tauri::generate_handler![
             scanner::scan_skill,
             settings::get_settings,
@@ -53,7 +56,11 @@ pub fn run() -> tauri::Result<()> {
             management::prepare_skill_uninstall,
             management::commit_skill_uninstall,
             management::rollback_skill_uninstall,
-            translator::translate_markdown
+            translator::translate_markdown,
+            automation::inject_text_to_agent,
+            monitor::start_desktop_monitor,
+            monitor::stop_desktop_monitor,
+            monitor::list_desktop_monitors,
         ])
         .run(tauri::generate_context!())
 }

@@ -40,11 +40,22 @@ pub struct SkillsMpConfig {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AutomationConfig {
+    #[serde(default)]
+    pub auto_inject_after_refine: bool,
+    #[serde(default)]
+    pub start_codex_recovery_monitor_on_launch: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub deep_scan: ApiConfig,
     pub prompt: ApiConfig,
     #[serde(default)]
     pub skills_mp: SkillsMpConfig,
+    #[serde(default)]
+    pub automation: AutomationConfig,
 }
 
 fn path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
@@ -165,6 +176,19 @@ fn migrate_secret(value: &str, name: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_settings_default_automation_to_disabled() {
+        let settings: AppSettings = serde_json::from_value(json!({
+            "deepScan": { "format": "openai", "apiUrl": "", "model": "" },
+            "prompt": { "format": "openai", "apiUrl": "", "model": "" },
+            "skillsMp": {}
+        }))
+        .expect("parse legacy settings");
+
+        assert!(!settings.automation.auto_inject_after_refine);
+        assert!(!settings.automation.start_codex_recovery_monitor_on_launch);
+    }
 
     #[test]
     fn windows_credential_manager_round_trip() {
