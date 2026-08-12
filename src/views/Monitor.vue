@@ -90,7 +90,7 @@ onUnmounted(() => { unlisten?.(); });
       <div class="grid sm:grid-cols-3">
         <div class="border-b border-stone-200 p-5 sm:border-b-0 sm:border-r"><p class="text-[10px] font-semibold uppercase tracking-wide text-stone-400">当前重连次数</p><p class="mt-2 text-2xl font-semibold" :class="status?.reconnect_attempt ? 'text-amber-700' : 'text-stone-900'">{{ status?.reconnect_attempt ?? 0 }} / 5</p></div>
         <div class="border-b border-stone-200 p-5 sm:border-b-0 sm:border-r"><p class="text-[10px] font-semibold uppercase tracking-wide text-stone-400">已发送恢复指令</p><p class="mt-2 text-2xl font-semibold text-teal-700">{{ status?.recovery_sent_count ?? 0 }}</p></div>
-        <div class="p-5"><p class="text-[10px] font-semibold uppercase tracking-wide text-stone-400">自动发送内容</p><code class="mt-2 block text-[12px] text-stone-800">继续并恢复todo-list</code></div>
+        <div class="p-5"><p class="text-[10px] font-semibold uppercase tracking-wide text-stone-400">自动发送内容</p><code class="mt-2 block break-words text-[12px] text-stone-800">{{ status?.recovery_text || '继续并恢复todo-list' }}</code></div>
       </div>
 
       <div v-if="status?.last_error" class="notice-error m-5">{{ status.last_error }}</div>

@@ -8,6 +8,7 @@ const CREDENTIAL_SERVICE: &str = "Super Skill Router";
 const DEEP_SCAN_SECRET: &str = "deep-scan-api-key";
 const PROMPT_SECRET: &str = "prompt-api-key";
 const SKILLSMP_SECRET: &str = "skillsmp-api-key";
+pub const DEFAULT_RECOVERY_TEXT: &str = "继续并恢复todo-list";
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -38,13 +39,29 @@ pub struct SkillsMpConfig {
     pub api_key_configured: bool,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AutomationConfig {
     #[serde(default)]
     pub auto_inject_after_refine: bool,
     #[serde(default)]
     pub start_codex_recovery_monitor_on_launch: bool,
+    #[serde(default = "default_recovery_text")]
+    pub recovery_text: String,
+}
+
+impl Default for AutomationConfig {
+    fn default() -> Self {
+        Self {
+            auto_inject_after_refine: false,
+            start_codex_recovery_monitor_on_launch: false,
+            recovery_text: default_recovery_text(),
+        }
+    }
+}
+
+fn default_recovery_text() -> String {
+    DEFAULT_RECOVERY_TEXT.to_string()
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -101,7 +118,7 @@ pub fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
     Ok(settings)
 }
 #[tauri::command]
-pub fn save_settings(app: AppHandle, settings: AppSettings) -> Result<(), String> {
+pub fn save_settings(app: AppHandle, mut settings: AppSettings) -> Result<(), String> {
     let path = path(&app)?;
     if !settings.deep_scan.api_key.trim().is_empty() {
         write_secret(DEEP_SCAN_SECRET, &settings.deep_scan.api_key)?;
@@ -112,6 +129,11 @@ pub fn save_settings(app: AppHandle, settings: AppSettings) -> Result<(), String
     if !settings.skills_mp.api_key.trim().is_empty() {
         write_secret(SKILLSMP_SECRET, &settings.skills_mp.api_key)?;
     }
+    settings.automation.recovery_text = if settings.automation.recovery_text.trim().is_empty() {
+        DEFAULT_RECOVERY_TEXT.to_string()
+    } else {
+        settings.automation.recovery_text.trim().to_string()
+    };
     let mut stored = settings;
     stored.deep_scan.api_key.clear();
     stored.deep_scan.api_key_configured = read_secret(DEEP_SCAN_SECRET)?.is_some();
@@ -188,6 +210,7 @@ mod tests {
 
         assert!(!settings.automation.auto_inject_after_refine);
         assert!(!settings.automation.start_codex_recovery_monitor_on_launch);
+        assert_eq!(settings.automation.recovery_text, DEFAULT_RECOVERY_TEXT);
     }
 
     #[test]

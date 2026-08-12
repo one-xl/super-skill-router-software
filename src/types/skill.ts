@@ -81,6 +81,7 @@ export interface SkillsMpConfig { apiKey: string; apiKeyConfigured?: boolean; }
 export interface AutomationConfig {
   autoInjectAfterRefine: boolean;
   startCodexRecoveryMonitorOnLaunch: boolean;
+  recoveryText: string;
 }
 export interface AppSettings {
   deepScan: ApiConfig;
@@ -165,6 +166,7 @@ export interface DesktopMonitorStatus {
   state: DesktopMonitorState;
   reconnect_attempt: number;
   recovery_sent_count: number;
+  recovery_text: string;
   last_error: string | null;
   log_path: string | null;
 }

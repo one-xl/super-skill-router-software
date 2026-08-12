@@ -11,7 +11,7 @@ const settings = ref<AppSettings>({
   deepScan: empty(),
   prompt: empty(),
   skillsMp: { apiKey: "", apiKeyConfigured: false },
-  automation: { autoInjectAfterRefine: false, startCodexRecoveryMonitorOnLaunch: false },
+  automation: { autoInjectAfterRefine: false, startCodexRecoveryMonitorOnLaunch: false, recoveryText: "继续并恢复todo-list" },
 });
 const loading = ref(true);
 const saving = ref(false);
@@ -141,6 +141,11 @@ onMounted(() => { void load(); });
               <span class="mt-1 block text-[11px] leading-5 text-stone-500">仅在 Codex 日志确认第 5 次重连失败后，自动输入并发送“继续并恢复todo-list”。</span>
             </span>
             <input v-model="settings.automation.startCodexRecoveryMonitorOnLaunch" type="checkbox" class="mt-0.5 size-4 shrink-0 accent-teal-700" />
+          </label>
+          <label class="block py-4">
+            <span class="block text-[13px] font-medium text-stone-800">第 5 次失败后的自动发送内容</span>
+            <span class="mt-1 block text-[11px] leading-5 text-stone-500">仅在 ChatGPT Desktop 显示“正在重新连接 5/5”后发送。留空会恢复为默认内容。</span>
+            <input v-model="settings.automation.recoveryText" class="field mt-2" maxlength="1000" placeholder="继续并恢复todo-list" />
           </label>
         </div>
       </section>

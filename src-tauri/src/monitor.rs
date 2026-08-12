@@ -9,16 +9,16 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
 use tokio::sync::{mpsc, Mutex};
 
-use crate::automation;
+use crate::{automation, settings};
 
 const MAX_FAILURES: u32 = 5;
-const RECOVERY_TEXT: &str = "继续并恢复todo-list";
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -36,6 +36,7 @@ pub struct DesktopMonitorStatus {
     pub state: MonitorState,
     pub reconnect_attempt: u32,
     pub recovery_sent_count: u32,
+    pub recovery_text: String,
     pub last_error: Option<String>,
     pub log_path: Option<String>,
 }
@@ -54,12 +55,14 @@ pub struct DesktopMonitorSupervisor {
 struct ReconnectTracker {
     attempt: u32,
     fired_for_attempt_five: bool,
+    recovery_turn_deadline: Option<Instant>,
 }
 
 #[derive(Debug, PartialEq)]
 enum ReconnectEvent {
     Attempt(u32),
     Connected,
+    NewTurn,
     Ignore,
 }
 
@@ -69,6 +72,10 @@ impl ReconnectTracker {
     }
 
     fn observe_event(&mut self, event: ReconnectEvent) -> (ReconnectEvent, bool) {
+        self.observe_event_at(event, Instant::now())
+    }
+
+    fn observe_event_at(&mut self, event: ReconnectEvent, now: Instant) -> (ReconnectEvent, bool) {
         match event {
             ReconnectEvent::Attempt(attempt) => {
                 self.attempt = attempt;
@@ -86,8 +93,26 @@ impl ReconnectTracker {
                 self.fired_for_attempt_five = false;
                 (ReconnectEvent::Connected, false)
             }
+            ReconnectEvent::NewTurn => {
+                if self
+                    .recovery_turn_deadline
+                    .is_some_and(|deadline| now <= deadline)
+                {
+                    self.recovery_turn_deadline = None;
+                    (ReconnectEvent::Ignore, false)
+                } else {
+                    self.recovery_turn_deadline = None;
+                    self.attempt = 0;
+                    self.fired_for_attempt_five = false;
+                    (ReconnectEvent::NewTurn, false)
+                }
+            }
             ReconnectEvent::Ignore => (ReconnectEvent::Ignore, false),
         }
+    }
+
+    fn mark_recovery_sent(&mut self) {
+        self.recovery_turn_deadline = Some(Instant::now() + Duration::from_secs(5));
     }
 }
 
@@ -103,7 +128,13 @@ fn field_u32(line: &str, key: &str) -> Option<u32> {
 }
 
 fn parse_codex_connection_event(line: &str) -> ReconnectEvent {
-    if !line.contains("[AppServerConnection]") || !line.contains("state_changed") {
+    if !line.contains("[AppServerConnection]") {
+        return ReconnectEvent::Ignore;
+    }
+    if line.contains("response_routed") && line.contains("method=turn/start") {
+        return ReconnectEvent::NewTurn;
+    }
+    if !line.contains("state_changed") {
         return ReconnectEvent::Ignore;
     }
     if line.contains("next=connected") {
@@ -159,6 +190,7 @@ impl DesktopMonitorSupervisor {
         }
         let log_root = codex_log_root()?;
         let log_path = newest_log(&log_root)?;
+        let recovery_text = settings::load(&app)?.automation.recovery_text;
         let (stop_tx, stop_rx) = mpsc::channel(1);
         let status = DesktopMonitorStatus {
             target_id: target_id.clone(),
@@ -166,6 +198,7 @@ impl DesktopMonitorSupervisor {
             state: MonitorState::Watching,
             reconnect_attempt: 0,
             recovery_sent_count: 0,
+            recovery_text: recovery_text.clone(),
             last_error: None,
             log_path: Some(log_path.display().to_string()),
         };
@@ -181,7 +214,13 @@ impl DesktopMonitorSupervisor {
 
         let shared = Arc::clone(&self.monitors);
         tokio::spawn(tail_codex_log(
-            app, target_id, log_root, log_path, stop_rx, shared,
+            app,
+            target_id,
+            log_root,
+            log_path,
+            recovery_text,
+            stop_rx,
+            shared,
         ));
         Ok(())
     }
@@ -226,6 +265,7 @@ async fn tail_codex_log(
     target_id: String,
     log_root: PathBuf,
     initial_log_path: PathBuf,
+    recovery_text: String,
     mut stop_rx: mpsc::Receiver<()>,
     monitors: Arc<Mutex<HashMap<String, MonitorEntry>>>,
 ) {
@@ -281,8 +321,11 @@ async fn tail_codex_log(
                                 ui_status_missing_ticks = 0;
                                 let (event, should_recover) = tracker.observe_event(ReconnectEvent::Attempt(attempt));
                                 apply_reconnect_event(&app, &monitors, &target_id, event).await;
-                                if should_recover {
-                                    send_recovery(&app, &monitors, &target_id).await?;
+                                if should_recover
+                                    && send_recovery(&app, &monitors, &target_id, &recovery_text)
+                                        .await?
+                                {
+                                    tracker.mark_recovery_sent();
                                 }
                             }
                             Ok(None) => {
@@ -304,8 +347,10 @@ async fn tail_codex_log(
                         let (event, should_recover) = tracker.observe(&line);
                         apply_reconnect_event(&app, &monitors, &target_id, event).await;
 
-                        if should_recover {
-                            send_recovery(&app, &monitors, &target_id).await?;
+                        if should_recover
+                            && send_recovery(&app, &monitors, &target_id, &recovery_text).await?
+                        {
+                            tracker.mark_recovery_sent();
                         }
                     }
                 }
@@ -349,6 +394,14 @@ async fn apply_reconnect_event(
             })
             .await;
         }
+        ReconnectEvent::NewTurn => {
+            update_status(app, monitors, target_id, |status| {
+                status.state = MonitorState::Watching;
+                status.reconnect_attempt = 0;
+                status.last_error = None;
+            })
+            .await;
+        }
         ReconnectEvent::Ignore => {}
     }
 }
@@ -357,13 +410,16 @@ async fn send_recovery(
     app: &AppHandle,
     monitors: &Arc<Mutex<HashMap<String, MonitorEntry>>>,
     target_id: &str,
-) -> Result<(), String> {
+    recovery_text: &str,
+) -> Result<bool, String> {
     let target = target_id.to_string();
+    let recovery_text = recovery_text.to_string();
     let recovery = tauri::async_runtime::spawn_blocking(move || {
-        automation::send_text_to_desktop(&target, RECOVERY_TEXT, true)
+        automation::send_text_to_desktop(&target, &recovery_text, true)
     })
     .await
     .map_err(|error| format!("自动恢复任务异常结束：{error}"))?;
+    let sent = recovery.is_ok();
     update_status(app, monitors, target_id, |status| match recovery {
         Ok(()) => {
             status.recovery_sent_count += 1;
@@ -375,7 +431,7 @@ async fn send_recovery(
         }
     })
     .await;
-    Ok(())
+    Ok(sent)
 }
 
 #[tauri::command]
@@ -404,6 +460,8 @@ pub async fn list_desktop_monitors(
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use super::{parse_codex_connection_event, ReconnectEvent, ReconnectTracker};
 
     fn line(attempt: u32) -> String {
@@ -440,6 +498,34 @@ mod tests {
     fn desktop_ui_attempt_uses_the_same_single_recovery_guard() {
         let mut tracker = ReconnectTracker::default();
         assert!(tracker.observe_event(ReconnectEvent::Attempt(5)).1);
+        assert!(!tracker.observe_event(ReconnectEvent::Attempt(5)).1);
+    }
+
+    #[test]
+    fn a_user_turn_rearms_when_the_recovery_turn_is_not_observed() {
+        let mut tracker = ReconnectTracker::default();
+        let start = Instant::now();
+        assert!(tracker.observe_event(ReconnectEvent::Attempt(5)).1);
+        tracker.mark_recovery_sent();
+        assert_eq!(
+            tracker
+                .observe_event_at(ReconnectEvent::NewTurn, start + Duration::from_secs(6))
+                .0,
+            ReconnectEvent::NewTurn
+        );
+        assert!(tracker.observe_event(ReconnectEvent::Attempt(5)).1);
+    }
+
+    #[test]
+    fn immediate_recovery_turn_is_not_mistaken_for_a_new_user_turn() {
+        let mut tracker = ReconnectTracker::default();
+        let start = Instant::now();
+        assert!(tracker.observe_event(ReconnectEvent::Attempt(5)).1);
+        tracker.mark_recovery_sent();
+        assert_eq!(
+            tracker.observe_event_at(ReconnectEvent::NewTurn, start).0,
+            ReconnectEvent::Ignore
+        );
         assert!(!tracker.observe_event(ReconnectEvent::Attempt(5)).1);
     }
 }
